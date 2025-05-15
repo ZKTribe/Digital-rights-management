@@ -1,25 +1,18 @@
+import type React from "react";
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
-import { StarknetProvider } from "~/StarknetProvider";
-import Footer from "./components/internal/Footer";
-import { Analytics } from "./components/internal/Analytics";
+import Sidebar from "@/components/sidebar";
+import Header from "@/components/internal/Header";
+import { StarknetProvider } from "@/components/StarknetProvider";
+import { WalletProvider } from "@/components/lib/WalletProvider";
+
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Starknet Scaffold",
+  title: "Digital Rights Management",
   description:
-    "Build pixel-perfect dApps on Starknet with our modern, streamlined Starknet-Scaffold. Featuring NextJS, Starknetjs, Starknetkit, Starknet-React, and Typescript, it’s fully equipped for Scarb and Starknet Foundry contract development. Simplify your workflow and focus on innovation. Starknet scaffold is an open-source, up-to-date toolkit for building decentralized applications (dapps) on Starknet.",
-  openGraph: {
-    title: "Starknet Scaffold",
-    description:
-      "An open-source, up-to-date toolkit for building decentralized applications (dapps) on Starknet.",
-    url: "https://app.starknetscaffold.xyz/",
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Starknet Scaffold",
-    description:
-      "An open-source, up-to-date toolkit for building decentralized applications (dapps) on Starknet.",
-  },
+    "Advanced Digital Rights Management for Media & Content Creators",
 };
 
 export default function RootLayout({
@@ -29,10 +22,18 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="font-coolvetica text-sm text-text-primary md:text-md">
-        <StarknetProvider>{children}</StarknetProvider>
-        <Footer />
-        <Analytics />
+      <body className={inter.className}>
+        <StarknetProvider>
+          <WalletProvider>
+            <div className="flex min-h-screen flex-col">
+              <Header />
+              <div className="flex flex-1">
+                <Sidebar />
+                <main className="flex-1 overflow-auto p-6">{children}</main>
+              </div>
+            </div>
+          </WalletProvider>
+        </StarknetProvider>
       </body>
     </html>
   );
