@@ -1,14 +1,45 @@
+enum LicenseType {
+    OneMonth,
+    SixMonths,
+    TwelveMonths,
+}
+
+struct LicensePrice{
+    content_id: u64, // ID of the content this license is for
+    price: u32, // Price of the license
+    license_type: Array<LicenseType>
+}
+
+// Represents a single license issued for a piece of content
+#[derive(Drop, starknet::Store)]
+struct License {
+    content_id: u64,              // ID of the content this license is for
+    License_type: LicenseType, // Type of license (e.g., OneMonth, SixMonths, TwelveMonths)
+    License_price: u64,            // Price for this license
+    licensee: ContractAddress,    // Address of the user who holds the license
+    start_timestamp: u64,         // Timestamp when the license becomes valid
+    end_timestamp: u64,           // Timestamp when the license expires (0 for perpetual)
+    // usage_limit: u64,             // Max number of uses allowed (0 for unlimited)
+    current_usage_count: u64,     // Number of times the license has been used
+    is_active: bool,              // Whether the license is currently active (can be revoked)
+}
+
 #[starknet::interface]
 pub trait IDigitalRightsManagement<TContractState> {
-    fn upload_content(self: @TContractState, price: u32, expiration: u64, title: felt252, ipfs_hash: felt252) -> u64; fn issue_license(self: @TContractState, content_id: u64) -> bool;
-    fn revoke_license(self: @TContractState, content_id: u64, user: ContractAddress) -> bool;
-    fn renew_license(self: @TContractState, content_id: u64, additional_time: u64) -> bool;
+    fn upload_content(self: @TContractState, price: u32, title: felt252, ipfs_hash: felt252) -> u64;
+    fn set_license_price(ref self: TContractState, content_id: u64, license_type: LicenseType, price: u32) -> bool; // Set the price for a specific license type for a given content
+    fn issue_license(self: @TContractState, content_id: u64, license_type) -> bool; 
+    fn revoke_license(self: @TContractState, license_id: u64, user: ContractAddress) -> bool;
+    fn renew_license(self: @TContractState, license_id: u64, additional_time: u64) -> bool;
+
+    // View functions
+    fn get_license_price(self: @TContractState, content_id: u64, license_type: LicenseType) -> u32;
     fn get_content_details(self: @TContractState, content_id: u64) -> (u32, u64, u32, u32, ContractAddress, felt252, felt252);
-    fn get_license_status(self: @TContractState, content_id: u64, user: ContractAddress) -> bool;
-    fn process_payment_for_content( ref self: ContractState, content_id: u64, amount_paid: u256) -> bool;
-    fn withdraw_royalties(ref self: ContractState);
+    fn get_license_status(self: @TContractState, license_id: u64, user: ContractAddress) -> bool;
+    // fn process_payment_for_content( ref self: ContractState, content_id: u64, amount_paid: u256) -> bool;
+    // fn withdraw_royalties(ref self: ContractState);
     fn check_access( self: @ContractState, content_id: u64, user: ContractAddress, required_permission: Permission) -> bool;
-    fn get_license(self: @ContractState, license_id: u64) -> License;
+    // fn get_license(self: @ContractState, license_id: u64) -> License;
 }
 
 // Represents different permissions a license can grant
@@ -20,19 +51,6 @@ enum Permission {
     Distribute,  // Permission for limited redistribution (e.g., in a project)
     Modify,      // Permission to create derivatives
 // Add other permissions as needed
-}
-
-// Represents a single license issued for a piece of content
-#[derive(Drop, starknet::Store)]
-struct License {
-    content_id: u64,              // ID of the content this license is for
-    licensee: ContractAddress,    // Address of the user who holds the license
-    permissions: Array<Permission>, // Array of permissions granted by this license
-    start_timestamp: u64,         // Timestamp when the license becomes valid
-    end_timestamp: u64,           // Timestamp when the license expires (0 for perpetual)
-    usage_limit: u64,             // Max number of uses allowed (0 for unlimited)
-    current_usage_count: u64,     // Number of times the license has been used
-    is_active: bool,              // Whether the license is currently active (can be revoked)
 }
 
 #[starknet::interface]
@@ -50,8 +68,10 @@ mod DRMContract {
 
     #[storage]
     struct Storage {
-        payment_token_address: ContractAddress, // Address of the ERC20 token contract used for payments
+        // payment_token_address: ContractAddress, // Address of the ERC20 token contract used for payments
         royalties: u32, // Percentage of royalties to be paid to the content owner
+        license_prices: Map<(u64, LicenseType), u32>, // Map content ID and license type to price
+        next_license_prices_id: u64,
         content_counter: u64, // Counter for unique content IDs
         content: Map<u64, ContentDetails>, // Map content ID to content details
         // license_owners: Map<(u64, ContractAddress), bool>,
