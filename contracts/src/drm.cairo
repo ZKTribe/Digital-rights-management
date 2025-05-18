@@ -7,7 +7,7 @@ enum LicenseType {
     TwelveMonths,
 }
 
-#[derive(Drop, starknet::Store, Serde)]
+#[derive(Copy, Drop, starknet::Store, PartialEq)]
 struct LicensePrice {
     content_id: u64, // ID of the content this license is for
     price: u32,      // Price of the license
@@ -16,11 +16,11 @@ struct LicensePrice {
 
 #[derive(Drop, starknet::Store, Serde)]
 struct ContentInfo {
+    id: u64,
     title: felt252,
     ipfs_hash: felt252,
     creator: ContractAddress,
     creation_timestamp: u64,
-    license_count: u32,
     is_active: bool
 }
 
@@ -44,7 +44,7 @@ pub trait IDigitalRightsManagement<TContractState> {
     
     fn set_license_price(ref self: TContractState, content_id: u64, license_type: LicenseType, price: u32) -> bool;
     
-    fn issue_license(ref self: TContractState, content_id: u64, license_type: LicenseType) -> bool;
+    fn issue_license(ref self: TContractState, content_id: u64, license_type: LicenseType) -> u64;
     
     fn revoke_license(ref self: TContractState, license_id: u64, user: ContractAddress) -> bool;
     
@@ -72,6 +72,8 @@ pub trait IDigitalRightsManagement<TContractState> {
     fn set_royalty_rates(ref self: TContractState,creator_percentage: u8, platform_percentage: u8) -> bool;
 
      fn set_payment_token(ref self: TContractState,token_address: ContractAddress) -> bool;
+
+     fn transfer_content_ownership(ref self: TContractState, content_id: u64, new_owner: ContractAddress) -> bool;
     
     fn check_access(self: @TContractState, content_id: u64, user: ContractAddress)->bool;
     
@@ -108,13 +110,14 @@ mod DRMContract {
         content_counter: u64,                            // Counter for unique content IDs
         content_info: Map<u64, ContentInfo>,             // Maps content ID to content details
         content_creator: Map<u64, ContractAddress>,      // Maps content ID to creator address
-        creator_contents: Map<ContractAddress, Array<u64>>, // Maps creator to their content IDs
+        creator_content_mapping: Map<(ContractAddress, u64), u64>,// Maps (creator, index) to content ID
+        creator_content_count: Map<ContractAddress, u64>,// Number of contents per creator
         
         // License management
         license_counter: u64,                            // Counter for unique license IDs
         licenses: Map<u64, License>,                     // Maps license ID to license details
-        content_licenses: Map<u64, Array<u64>>,          // Maps content ID to license IDs
-        user_licenses: Map<ContractAddress, Array<u64>>, // Maps user address to their license IDs
+        content_licenses:  Map<(u64, u64), bool>,          // Maps content ID to license IDs
+        user_licenses: Map<(ContractAddress, u64), u64>, // Maps user address to their license IDs
         license_prices: Map<(u64, LicenseType), u256>,   // Maps (content ID, license type) to price
         
         // Financial accounting
@@ -141,6 +144,7 @@ mod DRMContract {
         CreatorWithdrawal: CreatorWithdrawal,
         PlatformWithdrawal: PlatformWithdrawal,
         RoyaltyRatesChanged: RoyaltyRatesChanged,
+        TransferContentOwnership: TransferContentOwnership,
         #[flat]
         OwnableEvent: OwnableComponent::Event,
     }
@@ -212,6 +216,14 @@ mod DRMContract {
         platform_percentage: u8,
     }
 
+    #[derive(Drop, starknet::Event)]
+struct TransferContentOwnership {
+    content_id: u64,
+    previous_owner: ContractAddress,
+    new_owner: ContractAddress,
+    timestamp: u64,
+}
+
 
     #[constructor]
     fn constructor(ref self: ContractState, payment_token: ContractAddress,  owner: ContractAddress) {
@@ -238,62 +250,143 @@ mod DRMContract {
 
         fn upload_content(ref self: ContractState, title: felt252, ipfs_hash: felt252) -> u64 {
 
-             // Purpose: Allows content creators to upload and register their content on the platform
-            //
-            // Process:
-            // 1. Get the caller's address, which will be registered as the content creator
-            // 2. Increment the content counter to generate a new unique content ID
-            // 3. Create a ContentInfo struct with provided data and current timestamp
-            // 4. Store the content info in the contract's storage
-            // 5. Map the content to its creator
-            // 6. Add this content ID to the creator's list of contents
-            // 7. Emit a ContentUploaded event
-            // 8. Return the newly created content ID
-            //
-            // This function is the first step in the content lifecycle - creators upload content
-            // before setting prices and making it available for licensing
+    // 1. Get the caller's address, which will be registered as the content creator
+    let creator = get_caller_address();
+    
+    // 2. Increment the content counter to generate a new unique content ID
+    let content_id = self.content_counter.read() + 1;
+    self.content_counter.write(content_id);
+    
+    // 3. Create a ContentInfo struct with provided data and current timestamp
+    let current_timestamp = get_block_timestamp();
+    let content_info = ContentInfo {
+        id: content_id,
+        title: title,
+        ipfs_hash: ipfs_hash,
+        creator: creator,
+        creation_timestamp: current_timestamp,
+        is_active: true,
+    };
+    
+    // 4. Store the content info in the contract's storage
+    self.content_info.write(content_id, content_info);
+    
+    // 5. Map the content to its creator
+    self.content_creator.write(content_id, creator);
+    
+   // 6. Add this content ID to the creator's list of contents
+   let current_creator_content_count = self.creator_content_count.read(creator);
+            self.creator_content_mapping.write((creator, current_creator_content_count), content_id);
+            self.creator_content_count.write(creator, current_creator_content_count + 1);
+    
+    // 7. Emit a ContentUploaded event
+    self.emit(ContentUploaded {
+        content_id: content_id,
+        creator: creator,
+        title: title,
+        timestamp: current_timestamp,
+    });
+    
+    // 8. Return the newly created content ID
+    content_id
          
-        }
+}
 
-        fn set_license_price(ref self: ContractState, content_id: u64, license_type: LicenseType, price: u32) -> bool {
-             // Purpose: Sets the price for a specific type of license for a given content
-            //
-            // Process:
-            // 1. Verify the caller is the content creator/owner
-            // 2. Check if the content exists
-            // 3. Create a mapping from (content_id, license_type) -> price
-            // 4. Store the price in the contract's storage
-            // 5. Emit a LicensePriceSet event
-            // 6. Return true if successful
-            //
-            // Each content can have different prices for different license types
-            // (OneMonth, SixMonths, TwelveMonths)
-            // Only the content creator should be able to set prices
-        }
-        fn issue_license(ref self: ContractState, content_id: u64, license_type: LicenseType) -> bool {
-             // Purpose: Issues a license to a user after payment is confirmed
-            //
-            // Process:
-            // 1. Get the caller's address (the licensee)
-            // 2. Check if the content exists and has a price set for the requested license type
-            // 3. Process payment (could be called separately or internally)
-            // 4. Calculate license duration based on license type
-            //    - OneMonth: current time + 30 days
-            //    - SixMonths: current time + 180 days
-            //    - TwelveMonths: current time + 365 days
-            // 5. Increment license counter to generate a new unique license ID
-            // 6. Create License struct with all necessary details
-            // 7. Store the license in storage
-            // 8. Add license ID to user's licenses list
-            // 9. Add license ID to content's licenses list
-            // 10. Increment the content's license count
-            // 11. Emit a LicenseIssued event
-            // 12. Return the new license ID
-            //
-            // This function both creates the license and handles payment logic
+fn set_license_price(ref self: ContractState, content_id: u64, license_type: LicenseType, price: u32) -> bool {
+    // 1. Verify the caller is the content creator/owner
+    let caller = get_caller_address();
+    let content_creator = self.content_creator.read(content_id);
+    assert!(caller == content_creator, "Only creator can set price");
+    
+    // 2. Check if the content exists
+    let content_info = self.content_info.read(content_id);
+    assert!(content_info.is_active, "Content does not exist");
+    
+    // 3 & 4. Create a mapping from (content_id, license_type) -> price and store it
+    // Convert u32 price to u256 as that's what's used in the storage
+    let price_u256: u256 = price.into();
+    self.license_prices.write((content_id, license_type), price_u256);
+    
+    // 5. Emit a LicensePriceSet event
+    self.emit(LicensePriceSet {
+        content_id: content_id,
+        license_type: license_type,
+        price: price_u256,
+    });
+    
+    // 6. Return true if successful
+    true
+ }
+   fn issue_license(ref self: ContractState, content_id: u64, license_type: LicenseType) -> u64 {
+        // 1. Get the caller's address (the licensee)
+        let licensee = get_caller_address();
+
+        // 2. Check if the content exists and has a price set for the requested license type
+        let price_key = (content_id, license_type);
+        let price = self.license_prices.read(price_key);
+        assert(price > 0_u256, 'License price not set');
+
+        // 3. Process payment (could be called separately or internally)
+        let payment_success = self.process_payment_for_content(content_id, price);
+        assert(payment_success, 'Payment failed');
+
+        // 4. Calculate license duration based on license type
+        let start_timestamp = get_block_timestamp();
+        let duration = match license_type {
+            LicenseType::OneMonth => 30_u64 * 24_u64 * 60_u64 * 60_u64,       // 30 days
+            LicenseType::SixMonths => 180_u64 * 24_u64 * 60_u64 * 60_u64,     // 6 months
+            LicenseType::TwelveMonths => 365_u64 * 24_u64 * 60_u64 * 60_u64,  // 12 months
+        };
+        let end_timestamp = start_timestamp + duration;
+
+        // 5. Increment license counter to generate a new unique license ID
+        let license_id = self.license_counter.read() + 1_u64;
+        self.license_counter.write(license_id);
+
+        // 6. Create License struct with all necessary details
+        let license = License {
+            license_id,
+            content_id,
+            license_type,
+            license_price: price,
+            licensee,
+            start_timestamp,
+            end_timestamp,
+            current_usage_count: 0_u64,
+            is_active: true,
+        };
+
+        // 7. Store the license in storage
+        self.licenses.write(license_id, license);
+
+        // 8. Add license ID to user's licenses list
+        let user_license_count = self.user_licenses.read((licensee, 0_u64));
+        self.user_licenses.write((licensee, user_license_count), license_id);
+        self.user_licenses.write((licensee, 0_u64), user_license_count + 1_u64);
+
+        // 9. Add license ID to content's licenses list (if needed, otherwise remove this if not used)
+        let content_licenses = self.content_licenses.read((content_id, license_id));
+        self.content_licenses.write((content_id, license_id), true);
+
+        // 10. Emit a LicenseIssued event
+        self.emit(LicenseIssued {
+            license_id,
+            content_id,
+            license_type,
+            licensee,
+            price,
+            start_timestamp,
+            end_timestamp,
+        });
+
+        // 11. Return the new license ID
+        license_id
+    }
             // The payment splits 90% to content creator and 10% to platform
         }
-        fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddress) -> bool {
+
+
+fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddress) -> bool {
              // Purpose: Allows content owners to revoke licenses (in case of violations, etc.)
             //
             // Process:
@@ -307,8 +400,9 @@ mod DRMContract {
             //
             // Only the content creator or platform owner should be able to revoke licenses
             // Revoked licenses will still exist but will no longer grant access to content
+            
         }
-        fn renew_license(ref self: ContractState, license_id: u64, additional_time: u64) -> bool {
+fn renew_license(ref self: ContractState, license_id: u64, additional_time: u64) -> bool {
               // Purpose: Allows users to extend their license duration
             //
             // Process:
@@ -476,6 +570,24 @@ mod DRMContract {
             // Be cautious with this function as it affects all payments
             // Make sure to handle existing balances properly when changing tokens
         }
+
+        fn transfer_content_ownership(ref self: ContractState, content_id: u64, new_owner: ContractAddress) -> bool {
+    // Purpose: Allows content creators to transfer ownership of their content to another user
+    //
+    // Process:
+    // 1. Get the caller's address (current owner)
+    // 2. Check if the content exists
+    // 3. Verify the caller is the current content owner
+    // 4. Check that the new owner is not the zero address
+    // 5. Get current content info
+    // 6. Update content creator mapping
+    // 7. Update creator_contents mappings for both old and new owner
+    // 8. Update content_info with new creator
+    // 9. Emit a TransferContentOwnership event
+    // 10. Return true if successful
+
+        }
+
         fn check_access(self: @ContractState, content_id: u64, user: ContractAddress) -> bool {
              // Purpose: Verifies if a user has access to a specific content
             //
