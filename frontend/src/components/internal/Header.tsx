@@ -54,18 +54,8 @@ const Header = () => {
         <div className="container flex h-16 items-center justify-between px-4">
           <div className="flex items-center gap-4">
             <Link href="/" className="flex items-center gap-2">
-              <div className="flex items-center overflow-hidden rounded-md bg-white/10 p-1 shadow-sm backdrop-blur-sm">
-                <div className="flex">
-                  <span className="bg-gradient-to-r from-green-400 to-green-600 bg-clip-text px-2 py-1 text-xl font-bold text-transparent">
-                    D
-                  </span>
-                  <span className="bg-gradient-to-r from-yellow-400 to-yellow-600 bg-clip-text px-2 py-1 text-xl font-bold text-transparent">
-                    R
-                  </span>
-                  <span className="bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text px-2 py-1 text-xl font-bold text-transparent">
-                    M
-                  </span>
-                </div>
+              <div className="flex w-[150px] items-center overflow-hidden rounded-md bg-white/10 p-1 shadow-sm backdrop-blur-sm">
+                <img src="https://imagedelivery.net/xaKlCos5cTg_1RWzIu_h-A/0e4364cd-d54c-4935-fa9e-a70f225c9500/public" alt="" />
               </div>
             </Link>
           </div>
