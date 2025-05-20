@@ -75,7 +75,7 @@ pub trait IDigitalRightsManagement<TContractState> {
 
      fn transfer_content_ownership(ref self: TContractState, content_id: u64, new_owner: ContractAddress) -> bool;
     
-    fn check_access(self: @TContractState, content_id: u64, user: ContractAddress)->bool;
+    // fn check_access(self: @TContractState, content_id: u64, user: ContractAddress)->bool;
     
 }
 
@@ -95,7 +95,13 @@ mod DRMContract {
         Map, StoragePointerReadAccess, StoragePointerWriteAccess,StorageMapWriteAccess, StorageMapReadAccess,
     };
     use super::{IDigitalRightsManagement, IERC20, ContentInfo, License, LicenseType, LicensePrice};
-    use core::default::Default; // Import Default trait
+    
+
+    // Define the IERC20Contract struct for interface calls
+    #[derive(Copy, Drop)]
+    struct IERC20Contract {
+        contract_address: ContractAddress,
+    }
 
     component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
 
@@ -146,6 +152,7 @@ mod DRMContract {
         PlatformWithdrawal: PlatformWithdrawal,
         RoyaltyRatesChanged: RoyaltyRatesChanged,
         TransferContentOwnership: TransferContentOwnership,
+        PaymentTokenChanged: PaymentTokenChanged,
         #[flat]
         OwnableEvent: OwnableComponent::Event,
     }
@@ -223,6 +230,11 @@ struct TransferContentOwnership {
     previous_owner: ContractAddress,
     new_owner: ContractAddress,
     timestamp: u64,
+}
+
+struct PaymentTokenChanged {
+    old_token_address: ContractAddress,
+    new_token_address: ContractAddress,
 }
 
 
@@ -532,18 +544,49 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             //
             // Process:
             // 1. Get the caller's address (payer)
+            let payer = get_caller_address();
             // 2. Check if content exists and has a price for the requested license type
+            let content = self.content_info.read(content_id);
+            assert!(content.is_active, "Content does not exist or is inactive");
             // 3. Get the content creator's address
+            let creator = self.content_creator.read(content_id);
             // 4. Get the price for the requested license type
+
+            assert!(amount_paid > 0_u256, "Payment amount must be greater than zero");
             // 5. Calculate the split:
+            let creator_percentage = self.creator_royalty_percentage.read();
+            let platform_percentage = self.platform_royalty_percentage.read();
+            let creator_amount = (amount_paid * creator_percentage.into()) / 100_u256;
+            let platform_amount = (amount_paid * platform_percentage.into()) / 100_u256;
             //    - Creator amount = price * creator_royalty_percentage / 100
             //    - Platform amount = price * platform_royalty_percentage / 100
             // 6. Transfer the total amount from the user to this contract
+             let payment_token = self.payment_token.read();
+            let contract_address = starknet::get_contract_address();
+             //    - Transfer the total amount from the user to this contract    
             //    (requires approval from the user first)
+           // Use the IERC20 dispatcher to call the ERC20 contract
+            let erc20_dispatcher = IERC20Dispatcher { contract_address: payment_token };
+            let success = erc20_dispatcher.transfer_from(payer, contract_address, amount_paid);
+             assert!(success, "Payment transfer failed");
+           
             // 7. Update the creator's balance by adding the creator amount
-            // 8. Update the platform royalties balance by adding the platform amount
+            let current_creator_balance = self.creator_balances.read(creator);
+            self.creator_balances.write(creator, current_creator_balance + creator_amount);
+            // 8. Update the platform royalties balance
+            let current_platform_balance = self.platform_royalties_balance.read();
+            self.platform_royalties_balance.write(current_platform_balance + platform_amount);
             // 9. Emit a PaymentProcessed event
+            self.emit(PaymentProcessed {
+                content_id: content_id,
+                license_type: LicenseType::OneMonth, 
+                payer: payer,
+                amount: amount_paid,
+                creator_amount: creator_amount,
+                platform_amount: platform_amount,
+            });     
             // 10. Return true if successful
+            true
             //
             // This function handles the financial transactions
             // The 90/10 split is applied here
@@ -554,31 +597,70 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             //
             // Process:
             // 1. Get the caller's address (creator)
+            let creator = get_caller_address();
             // 2. Initialize a total withdrawal amount to 0
+            let mut total_withdrawal_amount: u256 = 0_u256;
             // 3. For each content ID in the array:
             //    - Verify the caller is the creator of that content
             //    - Add the earnings for that content to the total withdrawal amount
+            // 3. Verify the caller is the creator of the content and add earnings
+             let content_creator = self.content_creator.read(content_id);
+             assert!(creator == content_creator, "Only the content creator can withdraw earnings");
             // 4. If total withdrawal amount is 0, return 0
+            let creator_balance = self.creator_balances.read(creator);
+             total_withdrawal_amount = creator_balance;
             // 5. Clear the creator's balance for the specified content IDs
+            // 4. If total withdrawal amount is 0, return early
+             if total_withdrawal_amount == 0_u256 {
+            return false
+              };
+               // 5. Clear the creator's balance
+                self.creator_balances.write(creator, 0_u256);
             // 6. Transfer the total amount from the contract to the creator
-            // 7. Emit a CreatorWithdrawal event
-            // 8. Return the withdrawn amount
+            let payment_token = self.payment_token.read();
+            let transfer_success = self._erc20_transfer(payment_token, creator, total_withdrawal_amount);
+            assert!(transfer_success, "Transfer failed");
+    
+             // 7. Emit a CreatorWithdrawal event
+             self.emit(CreatorWithdrawal {
+            creator: creator,
+            amount: total_withdrawal_amount,
+             });
+    
+             // 8. Return success status
+             true
             //
             // Creators can withdraw earnings from multiple contents at once
             // Only the actual creator can withdraw earnings for their content
         }
+
         fn withdraw_platform_royalties(ref self: ContractState) -> bool {
              // Purpose: Allows the platform owner to withdraw accumulated royalties
             //
             // Process:
             // 1. Get the caller's address
+            let caller = get_caller_address();
             // 2. Verify the caller is the platform owner
+            let owner = self.owner.read();
             // 3. Get the current platform royalties balance
+            let platform_royalties_balance = self.platform_royalties_balance.read();
+            assert!(caller == owner, "Only the platform owner can withdraw royalties");
             // 4. If balance is 0, return 0
+            if platform_royalties_balance == 0_u256 {
+                return false;
+            }
             // 5. Reset the platform royalties balance to 0
+            self.platform_royalties_balance.write(0_u256);
             // 6. Transfer the amount from the contract to the platform owner
+            let payment_token = self.payment_token.read();
+            let transfer_success = self._erc20_transfer(payment_token, owner, platform_royalties_balance);
+            assert!(transfer_success, "Transfer failed");
             // 7. Emit a PlatformWithdrawal event
+            self.emit(PlatformWithdrawal {
+                amount: platform_royalties_balance,
+            });
             // 8. Return the withdrawn amount
+            platform_royalties_balance
             //
             // Only the platform owner can withdraw platform royalties
             // This collects the 10% fee from all license payments
@@ -588,7 +670,9 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             //
             // Process:
             // 1. Read the creator's balance from storage
+            let creator_balance = self.creator_balances.read(creator);
             // 2. Return the balance
+            creator_balance
             //
             // A read-only function for creators to check their earnings
             // Used by frontend to display earnings information
@@ -598,7 +682,9 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             //
             // Process:
             // 1. Read the platform_royalties_balance from storage
+            let platform_royalties_balance = self.platform_royalties_balance.read();
             // 2. Return the balance
+            platform_royalties_balance
             //
             // A read-only function for the platform owner
             // Used for financial monitoring and planning
@@ -608,9 +694,13 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             //
             // Process:
             // 1. Read the creator_royalty_percentage from storage
+            let creator_percentage = self.creator_royalty_percentage.read();
             // 2. Read the platform_royalty_percentage from storage
+            let platform_percentage = self.platform_royalty_percentage.read();
+
             // 3. Return them as a tuple: (creator_percentage, platform_percentage)
-            //
+            (creator_percentage, platform_percentage)
+
             // A read-only function to check the current revenue split configuration
             // By default, returns (90, 10) for 90% to creators, 10% to platform
         }
@@ -619,12 +709,23 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             //
             // Process:
             // 1. Get the caller's address
+            let caller = get_caller_address();
             // 2. Verify the caller is the platform owner
+            let owner = self.owner.read();
+            assert!(caller == owner, "Only the platform owner can change royalty rates");
             // 3. Ensure creator_percentage + platform_percentage = 100
+            assert!(creator_percentage + platform_percentage == 100, "Royalty percentages must sum to 100");
             // 4. Update the creator_royalty_percentage
+            self.creator_royalty_percentage.write(creator_percentage);
             // 5. Update the platform_royalty_percentage
+            self.platform_royalty_percentage.write(platform_percentage);
             // 6. Emit a RoyaltyRatesChanged event
+            self.emit(RoyaltyRatesChanged {
+                creator_percentage: creator_percentage,
+                platform_percentage: platform_percentage,
+            });
             // 7. Return true if successful
+            true
             //
             // Only the platform owner can change royalty rates
             // The sum of percentages must be exactly 100
@@ -634,11 +735,21 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             //
             // Process:
             // 1. Get the caller's address
+            let caller = get_caller_address();
             // 2. Verify the caller is the platform owner
+            let owner = self.owner.read();
             // 3. Store the old token address for the event
+            let old_token_address = self.payment_token.read();
+            assert!(caller == owner, "Only the platform owner can change payment token");
             // 4. Update the payment_token in storage
+            self.payment_token.write(token_address);
             // 5. Emit a PaymentTokenChanged event
+            self.emit(PaymentTokenChanged {
+                old_token_address: old_token_address,
+                new_token_address: token_address,
+            });
             // 6. Return true if successful
+            true
             //
             // Only the platform owner can change the payment token
             // Be cautious with this function as it affects all payments
@@ -650,34 +761,40 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
     //
     // Process:
     // 1. Get the caller's address (current owner)
+    let caller = get_caller_address();
     // 2. Check if the content exists
+    let content_info = self.content_info.read(content_id);
     // 3. Verify the caller is the current content owner
+    let current_owner = self.content_creator.read(content_id);
+    assert!(caller == current_owner, "Only the content owner can transfer ownership");
     // 4. Check that the new owner is not the zero address
+    assert!(new_owner != ContractAddress::zero(), "New owner cannot be zero address");
     // 5. Get current content info
+    assert!(content_info.is_active, "Content does not exist or is inactive");
     // 6. Update content creator mapping
+    self.content_creator.write(content_id, new_owner);
     // 7. Update creator_contents mappings for both old and new owner
+    self.creator_content_mapping.write((current_owner, self.creator_content_count.read(current_owner) - 1), content_id);
+    self.creator_content_mapping.write((new_owner, self.creator_content_count.read(new_owner)), content_id);
     // 8. Update content_info with new creator
+    let updated_content_info = ContentInfo {
+        creator: new_owner,
+        ..content_info
+    };
+    self.content_info.write(content_id, updated_content_info);
     // 9. Emit a TransferContentOwnership event
+    self.emit(TransferContentOwnership {
+        content_id: content_id,
+        previous_owner: current_owner,
+        new_owner: new_owner,
+        timestamp: get_block_timestamp(),
+    });
     // 10. Return true if successful
+    true
 
         }
 
-        fn check_access(self: @ContractState, content_id: u64, user: ContractAddress) -> bool {
-             // Purpose: Verifies if a user has access to a specific content
-            //
-            // Process:
-            // 1. Get all licenses owned by the user
-            // 2. For each license, check:
-            //    - Does it match the requested content_id?
-            //    - Is it currently active?
-            //    - Is it not expired?
-            // 3. If any valid license is found, return true
-            // 4. Otherwise, return false
-            //
-            // This is the main access control function for the DRM system
-            // Used by external applications to verify user access rights
-        }
+      
 
     }
 
-}
