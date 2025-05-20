@@ -14,7 +14,7 @@ struct LicensePrice {
     license_type: LicenseType
 }
 
-#[derive(Drop, starknet::Store, Serde)]
+#[derive(Copy, Drop, starknet::Store, Serde, PartialEq)]
 struct ContentInfo {
     id: u64,
     title: felt252,
@@ -95,6 +95,7 @@ mod DRMContract {
         Map, StoragePointerReadAccess, StoragePointerWriteAccess,StorageMapWriteAccess, StorageMapReadAccess,
     };
     use super::{IDigitalRightsManagement, IERC20, ContentInfo, License, LicenseType, LicensePrice};
+    use core::default::Default; // Import Default trait
 
     component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
 
@@ -391,25 +392,77 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             //
             // Process:
             // 1. Get the caller's address
+            let caller = get_caller_address();
+
             // 2. Check if the license exists
+            let license = self.licenses.read(license_id);
+
+            assert!(license != Default::default(), "License does not exist");
+
             // 3. Get the content ID from the license
+            let content_id = license.content_id;
+
             // 4. Verify caller is either the content creator or platform owner
-            // 5. Set the license's is_active field to false
-            // 6. Emit a LicenseRevoked event
-            // 7. Return true if successful
+            let content_creator = self.content_creator.read(content_id);
+            assert!(caller == content_creator || caller == self.owner.read(), "Caller is not authorized to revoke this license");
+
+            // 5. Check if the license is active
+            assert!(license.is_active, "License is already revoked");
+
+            // 6. Set the license's is_active field to false
+            license.is_active = false;
+
+            let license_owner = license.licensee.read()
+
+            // 7. Emit a LicenseRevoked event
+            self.
+                emit(LicenseRevoked {
+                    license_id: license_id,
+                    content_id: content_id,
+                    licensee: license_owner,
+                })
+
+            // 8. Return true if successful
+            true
+
             //
             // Only the content creator or platform owner should be able to revoke licenses
             // Revoked licenses will still exist but will no longer grant access to content
             
         }
-fn renew_license(ref self: ContractState, license_id: u64, additional_time: u64) -> bool {
+
+
+        fn renew_license(ref self: ContractState, license_id: u64, additional_time: u64) -> bool {
+
               // Purpose: Allows users to extend their license duration
             //
             // Process:
             // 1. Get the caller's address
+            let caller = get_caller_address();
+
             // 2. Check if the license exists and belongs to the caller
+                // check if the license exist
+            assert!(license != Default::default(), "License does not exist");
+
+                // get the license
+            let license = self.licenses.read(license_id);
+
+                // get the license owner 
+            let license_owner = license.licensee.read();
+
+                // verify it belongs to the caller
+            assert!(caller == license, "License doesn't belong to you");
+
             // 3. Verify the license is active
+            assert!(license.is_active != false, "License is expired");
+
             // 4. Calculate the new end timestamp by adding additional_time to current end_timestamp
+            let current_end_timestamp = license.end_timestamp.read();
+
+            let new_end_timestamp = current_end_timestamp + additional_time;
+
+            license.end_timestamp.write(new_end_timestamp);
+
             // 5. Calculate price based on additional time (proportional to original license price)
             // 6. Process payment (same 90/10 split as original license)
             // 7. Update the license's end_timestamp
@@ -425,8 +478,19 @@ fn renew_license(ref self: ContractState, license_id: u64, additional_time: u64)
             //
             // Process:
             // 1. Check if content exists
+            let content = self.content_info.read(content_id);
+
+            assert!(content != Default::default(), "Content does not exist")
+
             // 2. Return the stored price for the (content_id, license_type) pair
+            let license_price = self.license_prices.read((content_id, license_type));
+
             // 3. If no price is set, return 0
+            if !license_price {
+                return 0
+            } else {
+                return license_price
+            }
             //
             // A read-only function that doesn't modify state
             // Used by frontend to display prices to users
