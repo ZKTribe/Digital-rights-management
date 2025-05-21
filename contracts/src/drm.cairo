@@ -319,7 +319,9 @@ fn set_license_price(ref self: ContractState, content_id: u64, license_type: Lic
     
     // 2. Check if the content exists
     let content_info = self.content_info.read(content_id);
-    assert!(content_info.is_active, "Content does not exist");
+    assert!(content_info.id != 0_u64, "Content does not exist");
+    // Check if the content is active   
+    assert!(content_info.is_active, "Content is inactive");
     
     // 3 & 4. Create a mapping from (content_id, license_type) -> price and store it
     // Convert u32 price to u256 as that's what's used in the storage
@@ -496,8 +498,8 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             // Process:
             // 1. Check if content exists
             let content = self.content_info.read(content_id);
-
-            assert!(content.is_active, "Content does not exist");
+            assert!(content.id != 0_u64, "Content does not exist");
+            assert!(content.is_active, "Content is inactive");
 
             // 2. Return the stored price for the (content_id, license_type) pair
             let license_price = self.license_prices.read((content_id, license_type));
@@ -514,7 +516,8 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
         }
       fn get_content_details(self: @ContractState,content_id: u64) -> (u64, felt252, felt252, ContractAddress, u64) {
         let content = self.content_info.read(content_id);
-        assert!(content.is_active, "Content does not exist or is inactive");
+        assert!(content.id != 0_u64, "Content does not exist");
+        assert!(content.is_active, "Content is inactive");
 
     (
         content.id,
@@ -554,7 +557,8 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
     
     // 2. Check if content exists and has a price for the requested license type
     let content = self.content_info.read(content_id);
-    assert!(content.is_active, "Content does not exist or is inactive");
+    assert!(content.id != 0_u64, "Content does not exist");
+    assert!(content.is_active, "Content is inactive");
     
     // 3. Get the content creator's address
     let creator = self.content_creator.read(content_id);
@@ -784,43 +788,62 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             // Make sure to handle existing balances properly when changing tokens
         }
 
-        fn transfer_content_ownership(ref self: ContractState, content_id: u64, new_owner: ContractAddress) -> bool {
-    // Purpose: Allows content creators to transfer ownership of their content to another user
-    //
-    // Process:
+      fn transfer_content_ownership(ref self: ContractState, content_id: u64, new_owner: ContractAddress) -> bool {
     // 1. Get the caller's address (current owner)
     let caller = get_caller_address();
-    // 2. Check if the content exists
+
+    // 2. Check if the content exists and is active
     let content_info = self.content_info.read(content_id);
+    assert!(content_info.id != 0, "Content does not exist");
+    assert!(content_info.is_active, "Content is inactive");
+
     // 3. Verify the caller is the current content owner
     let current_owner = self.content_creator.read(content_id);
     assert!(caller == current_owner, "Only the content owner can transfer ownership");
-    // 4. Check that the new owner is not the zero address
-    assert!(new_owner != ContractAddress::zero(), "New owner cannot be zero address");
-    // 5. Get current content info
-    assert!(content_info.is_active, "Content does not exist or is inactive");
-    // 6. Update content creator mapping
+
+    // 4. Ensure new_owner is not zero address or same as current
+    assert!(new_owner != starknet::contract_address_const::<0>(), "DRM: New owner is zero");
+    assert!(new_owner != current_owner, "DRM: New owner is current owner");
+
+    // 5. Update content_creator mapping
     self.content_creator.write(content_id, new_owner);
-    // 7. Update creator_contents mappings for both old and new owner
-    self.creator_content_mapping.write((current_owner, self.creator_content_count.read(current_owner) - 1), content_id);
-    self.creator_content_mapping.write((new_owner, self.creator_content_count.read(new_owner)), content_id);
-    // 8. Update content_info with new creator
+
+    // 6. Update content count for both old and new owners
+    let old_count = self.creator_content_count.read(current_owner);
+    let new_count = self.creator_content_count.read(new_owner);
+
+    // Decrement current owner's content count
+    self.creator_content_count.write(current_owner, old_count - 1);
+
+    // Increment new owner's content count
+    self.creator_content_count.write(new_owner, new_count + 1);
+
+    // 7. Update creator_content_mapping
+    // Remove or mark previous mapping for current owner as deleted (optional)
+    self.creator_content_mapping.write((current_owner, old_count - 1), 0); 
+
+    // Add new mapping for new owner
+    self.creator_content_mapping.write((new_owner, new_count), content_id);
+
+    // 8. Update content_info with new owner
     let updated_content_info = ContentInfo {
         creator: new_owner,
         ..content_info
     };
     self.content_info.write(content_id, updated_content_info);
-    // 9. Emit a TransferContentOwnership event
+
+    // 9. Emit event
     self.emit(TransferContentOwnership {
-        content_id: content_id,
+        content_id,
         previous_owner: current_owner,
-        new_owner: new_owner,
+        new_owner,
         timestamp: get_block_timestamp(),
     });
-    // 10. Return true if successful
-    true
 
-        }
+    // 10. Return success
+    true
+}
+
 
       
 
