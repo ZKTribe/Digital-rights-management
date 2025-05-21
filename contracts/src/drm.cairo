@@ -1,21 +1,21 @@
 use starknet::ContractAddress;
 
-#[derive(Copy, Drop, starknet::Store, Serde, PartialEq)]
-enum LicenseType {
-    OneMonth,
-    SixMonths,
-    TwelveMonths,
-}
+ #[derive(Copy, Drop, starknet::Store, Serde, PartialEq)]
+    pub enum LicenseType { 
+        OneMonth,
+        SixMonths,
+        TwelveMonths,
+    }
 
 #[derive(Copy, Drop, starknet::Store, PartialEq)]
-struct LicensePrice {
+pub struct LicensePrice {
     content_id: u64, // ID of the content this license is for
     price: u32,      // Price of the license
     license_type: LicenseType
 }
 
 #[derive(Copy, Drop, starknet::Store, Serde, PartialEq)]
-struct ContentInfo {
+pub struct ContentInfo {
     id: u64,
     title: felt252,
     ipfs_hash: felt252,
@@ -59,9 +59,9 @@ pub trait IDigitalRightsManagement<TContractState> {
     
     fn process_payment_for_content(ref self: TContractState, content_id: u64, amount_paid: u256) -> bool;
     
-    fn withdraw_creator_earnings(ref self: TContractState, content_id: u64) -> bool;
+    fn withdraw_creator_earnings(ref self: TContractState, content_id: u64, total_withdrawal_amount: u256) -> bool;
 
-    fn withdraw_platform_royalties(ref self: TContractState) -> bool;
+    fn withdraw_platform_royalties(ref self: TContractState, total_withdrawal_amount: u256) -> bool;
 
     fn get_creator_balance(self: @TContractState,creator: ContractAddress) -> u256;
     
@@ -82,7 +82,9 @@ pub trait IDigitalRightsManagement<TContractState> {
 
 #[starknet::interface]
 pub trait IERC20<TContractState> {
-    fn transfer_from(self: @TContractState, sender: ContractAddress, recipient: ContractAddress, amount: u256) -> bool;
+    fn transfer_from(ref self: TContractState, sender: ContractAddress, recipient: ContractAddress, amount: u256) -> bool;
+    fn transfer(ref self: TContractState, recipient: ContractAddress, amount: u256) -> bool;
+    fn balance_of(self: @TContractState, account: ContractAddress) -> u256;
 }
 
 #[starknet::contract]
@@ -95,6 +97,8 @@ mod DRMContract {
         Map, StoragePointerReadAccess, StoragePointerWriteAccess,StorageMapWriteAccess, StorageMapReadAccess,
     };
     use super::{IDigitalRightsManagement, IERC20, ContentInfo, License, LicenseType, LicensePrice};
+    use super::IERC20DispatcherTrait;
+    use super::IERC20Dispatcher;
     
 
     // Define the IERC20Contract struct for interface calls
@@ -104,6 +108,8 @@ mod DRMContract {
     }
 
     component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
+
+    
 
    #[storage]
     struct Storage {
@@ -231,7 +237,7 @@ struct TransferContentOwnership {
     new_owner: ContractAddress,
     timestamp: u64,
 }
-
+ #[derive(Drop, starknet::Event)]
 struct PaymentTokenChanged {
     old_token_address: ContractAddress,
     new_token_address: ContractAddress,
@@ -491,7 +497,7 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             // 1. Check if content exists
             let content = self.content_info.read(content_id);
 
-            assert!(content != Default::default(), "Content does not exist");
+            assert!(content.is_active, "Content does not exist");
 
             // 2. Return the stored price for the (content_id, license_type) pair
             let license_price = self.license_prices.read((content_id, license_type));
@@ -539,132 +545,154 @@ fn revoke_license(ref self: ContractState, license_id: u64, user: ContractAddres
             //
             // Used to quickly check if a license is valid without retrieving all details
         }
-        fn process_payment_for_content(ref self: ContractState, content_id: u64, amount_paid: u256) -> bool {
-              // Purpose: Processes payment for licensing content and splits revenue
-            //
-            // Process:
-            // 1. Get the caller's address (payer)
-            let payer = get_caller_address();
-            // 2. Check if content exists and has a price for the requested license type
-            let content = self.content_info.read(content_id);
-            assert!(content.is_active, "Content does not exist or is inactive");
-            // 3. Get the content creator's address
-            let creator = self.content_creator.read(content_id);
-            // 4. Get the price for the requested license type
-
-            assert!(amount_paid > 0_u256, "Payment amount must be greater than zero");
-            // 5. Calculate the split:
-            let creator_percentage = self.creator_royalty_percentage.read();
-            let platform_percentage = self.platform_royalty_percentage.read();
-            let creator_amount = (amount_paid * creator_percentage.into()) / 100_u256;
-            let platform_amount = (amount_paid * platform_percentage.into()) / 100_u256;
-            //    - Creator amount = price * creator_royalty_percentage / 100
-            //    - Platform amount = price * platform_royalty_percentage / 100
-            // 6. Transfer the total amount from the user to this contract
-             let payment_token = self.payment_token.read();
-            let contract_address = starknet::get_contract_address();
-             //    - Transfer the total amount from the user to this contract    
-            //    (requires approval from the user first)
-           // Use the IERC20 dispatcher to call the ERC20 contract
-            let erc20_dispatcher = IERC20Dispatcher { contract_address: payment_token };
-            let success = erc20_dispatcher.transfer_from(payer, contract_address, amount_paid);
-             assert!(success, "Payment transfer failed");
-           
-            // 7. Update the creator's balance by adding the creator amount
-            let current_creator_balance = self.creator_balances.read(creator);
-            self.creator_balances.write(creator, current_creator_balance + creator_amount);
-            // 8. Update the platform royalties balance
-            let current_platform_balance = self.platform_royalties_balance.read();
-            self.platform_royalties_balance.write(current_platform_balance + platform_amount);
-            // 9. Emit a PaymentProcessed event
-            self.emit(PaymentProcessed {
-                content_id: content_id,
-                license_type: LicenseType::OneMonth, 
-                payer: payer,
-                amount: amount_paid,
-                creator_amount: creator_amount,
-                platform_amount: platform_amount,
-            });     
-            // 10. Return true if successful
-            true
-            //
-            // This function handles the financial transactions
-            // The 90/10 split is applied here
-            // No actual license is issued here - that's handled by issue_license
-        }
-        fn withdraw_creator_earnings(ref self: ContractState, content_id: u64) -> bool {
-                // Purpose: Allows content creators to withdraw their earnings
-            //
-            // Process:
-            // 1. Get the caller's address (creator)
-            let creator = get_caller_address();
-            // 2. Initialize a total withdrawal amount to 0
-            let mut total_withdrawal_amount: u256 = 0_u256;
-            // 3. For each content ID in the array:
-            //    - Verify the caller is the creator of that content
-            //    - Add the earnings for that content to the total withdrawal amount
-            // 3. Verify the caller is the creator of the content and add earnings
-             let content_creator = self.content_creator.read(content_id);
-             assert!(creator == content_creator, "Only the content creator can withdraw earnings");
-            // 4. If total withdrawal amount is 0, return 0
-            let creator_balance = self.creator_balances.read(creator);
-             total_withdrawal_amount = creator_balance;
-            // 5. Clear the creator's balance for the specified content IDs
-            // 4. If total withdrawal amount is 0, return early
-             if total_withdrawal_amount == 0_u256 {
-            return false
-              };
-               // 5. Clear the creator's balance
-                self.creator_balances.write(creator, 0_u256);
-            // 6. Transfer the total amount from the contract to the creator
-            let payment_token = self.payment_token.read();
-            let transfer_success = self._erc20_transfer(payment_token, creator, total_withdrawal_amount);
-            assert!(transfer_success, "Transfer failed");
+      fn process_payment_for_content(ref self: ContractState, content_id: u64, amount_paid: u256) -> bool {
+    // Purpose: Processes payment for licensing content and splits revenue
+    //
+    // Process:
+    // 1. Get the caller's address (payer)
+    let payer = get_caller_address();
     
-             // 7. Emit a CreatorWithdrawal event
-             self.emit(CreatorWithdrawal {
-            creator: creator,
-            amount: total_withdrawal_amount,
-             });
+    // 2. Check if content exists and has a price for the requested license type
+    let content = self.content_info.read(content_id);
+    assert!(content.is_active, "Content does not exist or is inactive");
     
-             // 8. Return success status
-             true
-            //
-            // Creators can withdraw earnings from multiple contents at once
-            // Only the actual creator can withdraw earnings for their content
-        }
+    // 3. Get the content creator's address
+    let creator = self.content_creator.read(content_id);
+    
+    // 4. Validate the payment amount
+    assert!(amount_paid > 0_u256, "Payment amount must be greater than zero");
+    
+    // 5. Calculate the split:
+    let creator_percentage = self.creator_royalty_percentage.read();
+    let platform_percentage = self.platform_royalty_percentage.read();
+    let creator_amount = (amount_paid * creator_percentage.into()) / 100_u256;
+    let platform_amount = (amount_paid * platform_percentage.into()) / 100_u256;
+    
+    // 6. Transfer the total amount from the user to this contract
+    let payment_token = self.payment_token.read();
+    let contract_address = starknet::get_contract_address();
+    
+    // Use the IERC20 dispatcher to call the ERC20 contract
+    let erc20_dispatcher = IERC20Dispatcher { contract_address: payment_token };
 
-        fn withdraw_platform_royalties(ref self: ContractState) -> bool {
-             // Purpose: Allows the platform owner to withdraw accumulated royalties
-            //
-            // Process:
-            // 1. Get the caller's address
-            let caller = get_caller_address();
-            // 2. Verify the caller is the platform owner
-            let owner = self.owner.read();
-            // 3. Get the current platform royalties balance
-            let platform_royalties_balance = self.platform_royalties_balance.read();
-            assert!(caller == owner, "Only the platform owner can withdraw royalties");
-            // 4. If balance is 0, return 0
-            if platform_royalties_balance == 0_u256 {
-                return false;
-            }
-            // 5. Reset the platform royalties balance to 0
-            self.platform_royalties_balance.write(0_u256);
-            // 6. Transfer the amount from the contract to the platform owner
-            let payment_token = self.payment_token.read();
-            let transfer_success = self._erc20_transfer(payment_token, owner, platform_royalties_balance);
-            assert!(transfer_success, "Transfer failed");
-            // 7. Emit a PlatformWithdrawal event
-            self.emit(PlatformWithdrawal {
-                amount: platform_royalties_balance,
-            });
-            // 8. Return the withdrawn amount
-            platform_royalties_balance
-            //
-            // Only the platform owner can withdraw platform royalties
-            // This collects the 10% fee from all license payments
-        }
+    // Check if the payer has enough balance
+    let payer_balance = erc20_dispatcher.balance_of(payer);
+    assert!(payer_balance >= amount_paid, "Insufficient balance");
+
+    // Transfer the amount from the payer to the contract
+    let success = erc20_dispatcher.transfer_from(payer, contract_address, amount_paid);
+    assert!(success, "Payment transfer failed");
+   
+    // 7. Update the creator's balance by adding the creator amount
+    let current_creator_balance = self.creator_balances.read(creator);
+    self.creator_balances.write(creator, current_creator_balance + creator_amount);
+    
+    // 8. Update the platform royalties balance
+    let current_platform_balance = self.platform_royalties_balance.read();
+    self.platform_royalties_balance.write(current_platform_balance + platform_amount);
+    
+    // 9. Emit a PaymentProcessed event
+    self.emit(PaymentProcessed {
+        content_id: content_id,
+        license_type: LicenseType::OneMonth, // Note: This might need to be parameterized
+        payer: payer,
+        amount: amount_paid,
+        creator_amount: creator_amount,
+        platform_amount: platform_amount,
+    });     
+    
+    // 10. Return true if successful
+    true
+}
+    fn withdraw_creator_earnings(ref self: ContractState, content_id: u64, total_withdrawal_amount: u256) -> bool {
+    // Purpose: Allows content creators to withdraw their earnings
+    //
+    // Process:
+    // 1. Get the caller's address (creator)
+    let creator = get_caller_address();
+    
+    // 2. Check creator balance
+    let creator_balance = self.creator_balances.read(creator);
+    
+    // 3. If total withdrawal amount is 0, return false
+    if total_withdrawal_amount == 0_u256 {
+        return false;
+    }
+
+    // 4. Ensure withdrawal amount doesn't exceed balance
+    assert!(total_withdrawal_amount <= creator_balance, "Withdrawal amount exceeds available balance");
+    
+    // 5. Update the creator's balance
+    self.creator_balances.write(creator, creator_balance - total_withdrawal_amount);
+    
+    // 6. Transfer the total amount from the contract to the creator
+    let payment_token = self.payment_token.read();
+    let contract_address = starknet::get_contract_address();
+    
+    // Use the IERC20 dispatcher to call the ERC20 contract
+    let erc20_dispatcher = IERC20Dispatcher { contract_address: payment_token };
+    
+    // Transfer funds from contract to creator
+    let transfer_success = erc20_dispatcher.transfer(creator, total_withdrawal_amount);
+    assert!(transfer_success, "Transfer failed");
+
+    // 7. Emit a CreatorWithdrawal event
+    self.emit(CreatorWithdrawal {
+        creator: creator,
+        amount: total_withdrawal_amount,
+    });
+
+    // 8. Return success status
+    true
+}
+
+ fn withdraw_platform_royalties(ref self: ContractState, total_withdrawal_amount: u256) -> bool {
+    // Purpose: Allows the platform owner to withdraw accumulated royalties
+    //
+    // Process:
+    // 1. Get the caller's address
+    let caller = get_caller_address();
+    
+    // 2. Verify the caller is the platform owner
+    let owner = self.owner.read();
+    assert!(caller == owner, "Only the platform owner can withdraw royalties");
+    
+    // 3. Get the current platform royalties balance
+    let platform_royalties_balance = self.platform_royalties_balance.read();
+    
+    // 4. If balance is 0, return false
+    if platform_royalties_balance == 0_u256 {
+        return false;
+    }
+
+    // Check if withdrawal amount is valid
+    assert!(total_withdrawal_amount <= platform_royalties_balance, "Withdrawal amount exceeds available balance");
+    
+    // 5. Update the platform royalties balance
+    self.platform_royalties_balance.write(platform_royalties_balance - total_withdrawal_amount);
+
+    // 6. Transfer the amount from the contract to the platform owner
+    let contract_address = starknet::get_contract_address();
+    
+    // Use the IERC20 dispatcher to call the ERC20 contract
+    let payment_token = self.payment_token.read();
+    let erc20_dispatcher = IERC20Dispatcher { contract_address: payment_token };
+    
+    // Transfer from contract to owner
+    let transfer_success = erc20_dispatcher.transfer(owner, total_withdrawal_amount);
+    assert!(transfer_success, "Transfer failed");
+    
+    // 7. Emit a PlatformWithdrawal event
+    self.emit(PlatformWithdrawal {
+        owner: owner,
+        amount: total_withdrawal_amount,
+    });
+    
+    // 8. Return true if successful
+    true
+}
+
+
         fn get_creator_balance(self: @ContractState, creator: ContractAddress) -> u256 {
              // Purpose: Returns the current unwithdrawn balance of a creator
             //
