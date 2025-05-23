@@ -91,28 +91,31 @@ pub trait IDigitalRightsManagement<TContractState> {
 }
 
 
-#[starknet::interface]
-pub trait IERC20<TContractState> {
-    fn transfer_from(
-        ref self: TContractState, sender: ContractAddress, recipient: ContractAddress, amount: u256,
-    ) -> bool;
-    fn transfer(ref self: TContractState, recipient: ContractAddress, amount: u256) -> bool;
-    fn balance_of(self: @TContractState, account: ContractAddress) -> u256;
-}
+// #[starknet::interface]
+// pub trait IERC20<TContractState> {
+//     fn transfer_from(
+//         ref self: TContractState, sender: ContractAddress, recipient: ContractAddress, amount: u256,
+//     ) -> bool;
+//     fn transfer(ref self: TContractState, recipient: ContractAddress, amount: u256) -> bool;
+//     fn balance_of(self: @TContractState, account: ContractAddress) -> u256;
+// }
 
 #[starknet::contract]
 mod DRMContract {
     use OwnableComponent::InternalTrait;
     use starknet::{ContractAddress, get_caller_address, get_block_timestamp};
     use openzeppelin_access::ownable::OwnableComponent;
+    use openzeppelin_token::erc20::interface::{
+         IERC20DispatcherTrait, IERC20Dispatcher,
+    };
     use core::option::OptionTrait;
     use core::starknet::storage::{
         Map, StoragePointerReadAccess, StoragePointerWriteAccess, StorageMapWriteAccess,
         StorageMapReadAccess,
     };
     use super::{IDigitalRightsManagement, ContentInfo, License, LicenseType};
-    use super::IERC20DispatcherTrait;
-    use super::IERC20Dispatcher;
+    // use super::IERC20DispatcherTrait;
+    // use super::IERC20Dispatcher;
 
 
     // Define the IERC20Contract struct for interface calls
@@ -684,8 +687,17 @@ mod DRMContract {
             // Use the IERC20 dispatcher to call the ERC20 contract
             let erc20_dispatcher = IERC20Dispatcher { contract_address: payment_token };
 
+            // Check if the contract has enough balance
+            let contract_balance = erc20_dispatcher.balance_of(contract_address);
+            assert!(
+                contract_balance >= total_withdrawal_amount,
+                "Contract has insufficient balance",
+            );
+
             // Transfer funds from contract to creator
-            let transfer_success = erc20_dispatcher.transfer(creator, total_withdrawal_amount);
+            let transfer_success = erc20_dispatcher.transfer_from(
+                contract_address, creator, total_withdrawal_amount,
+            );
             assert!(transfer_success, "Transfer failed");
 
             // 7. Emit a CreatorWithdrawal event
@@ -734,8 +746,17 @@ mod DRMContract {
             let payment_token = self.payment_token.read();
             let erc20_dispatcher = IERC20Dispatcher { contract_address: payment_token };
 
-            // Transfer from contract to owner
-            let transfer_success = erc20_dispatcher.transfer(owner, total_withdrawal_amount);
+           // Check if the contract has enough balance
+            let contract_balance = erc20_dispatcher.balance_of(contract_address);
+            assert!(
+                contract_balance >= total_withdrawal_amount,
+                "Contract has insufficient balance",
+            );
+
+            // Transfer funds from contract to creator
+            let transfer_success = erc20_dispatcher.transfer_from(
+                contract_address, caller, total_withdrawal_amount,
+            );
             assert!(transfer_success, "Transfer failed");
 
             // 7. Emit a PlatformWithdrawal event
