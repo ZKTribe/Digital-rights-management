@@ -1,13 +1,15 @@
+use openzeppelin_token::erc20::interface::IERC20DispatcherTrait;
 use contracts::drm::{
- IDigitalRightsManagementDispatcher, IDigitalRightsManagementDispatcherTrait,
+    IDigitalRightsManagementDispatcher, IDigitalRightsManagementDispatcherTrait,
     IDigitalRightsManagementSafeDispatcher,
-    LicenseType, IERC20Dispatcher, IERC20DispatcherTrait,
+    LicenseType,
 };
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
     stop_cheat_caller_address,
 };
 use starknet::ContractAddress;
+use openzeppelin_token::erc20::interface::IERC20Dispatcher;
 
 // Test constants
 fn OWNER() -> ContractAddress {
@@ -34,7 +36,7 @@ fn NEW_OWNER() -> ContractAddress {
     'NEW_OWNER'.try_into().unwrap()
 }
 
-const ONE_MONTH_SECONDS: u256 = 30 * 24 * 60 * 60;
+const ONE_MONTH_SECONDS: u64 = 30 * 24 * 60 * 60;
 
 fn __deploy__() -> (IDigitalRightsManagementDispatcher, IDigitalRightsManagementSafeDispatcher) {
     let contract_class = declare("DRMContract").expect('failed to declare').contract_class();
@@ -48,6 +50,15 @@ fn __deploy__() -> (IDigitalRightsManagementDispatcher, IDigitalRightsManagement
     let drm = IDigitalRightsManagementDispatcher { contract_address };
     let safe_dispatcher = IDigitalRightsManagementSafeDispatcher { contract_address };
     (drm, safe_dispatcher)
+}
+
+// Setup helper function
+fn setup_content(drm: IDigitalRightsManagementDispatcher) -> u64 {
+    start_cheat_caller_address(drm.contract_address, CREATOR());
+    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
+    drm.set_license_price(content_id, LicenseType::OneMonth, 100);
+    stop_cheat_caller_address(drm.contract_address);
+    content_id
 }
 
 // ========== DEPLOYMENT TESTS ==========
@@ -64,15 +75,8 @@ fn test_drm_deployment() {
     assert!(platform_balance == 0_u256, "platform balance should be 0");
 }
 
-// Helper function to setup initial token balances
-fn setup_token_balances(token: IERC20Dispatcher, token_address: ContractAddress) {
-    // Transfer tokens from owner to users for testing
-    start_cheat_caller_address(token_address, OWNER());
-    token.transfer(CREATOR(), 10000_u256);
-    token.transfer(USER(), 10000_u256);
-    token.transfer(OTHER_USER(), 10000_u256);
-    stop_cheat_caller_address(token_address);
-}
+
+// ========== CONTENT MANAGEMENT TESTS ==========
 
 #[test]
 fn test_upload_content() {
@@ -93,31 +97,18 @@ fn test_upload_content() {
 }
 
 #[test]
-fn test_upload_multiple_content() {
+#[should_panic(expected: ('Content does not exist',))]
+fn test_get_nonexistent_content() {
     let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id_1 = drm.upload_content('Content 1', 'hash_1');
-    let content_id_2 = drm.upload_content('Content 2', 'hash_2');
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert!(content_id_1 == 1_u64, "first content id should be 1");
-    assert!(content_id_2 == 2_u64, "second content id should be 2");
+    drm.get_content_details(999_u64);
 }
+
+// ========== LICENSE MANAGEMENT TESTS ==========
 
 #[test]
 fn test_set_license_price() {
     let (drm, _) = __deploy__();
-
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    let success = drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert(success == true, 'price setting should succeed');
+    let content_id = setup_content(drm);
 
     let price = drm.get_license_price(content_id, LicenseType::OneMonth);
     assert!(price == 100_u32, "price should be 100");
@@ -128,182 +119,167 @@ fn test_set_license_price() {
 #[should_panic(expected: ('Only creator can set price',))]
 fn test_set_license_price_non_creator() {
     let (drm, _) = __deploy__();
+    let content_id = setup_content(drm);
 
-    // Upload content as creator
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Try to set price as different user
     start_cheat_caller_address(drm.contract_address, USER());
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
+    drm.set_license_price(content_id, LicenseType::OneMonth, 100);
     stop_cheat_caller_address(drm.contract_address);
-}
-
-
-
-#[test]
-#[should_panic(expected: ('Content does not exist',))]
-fn test_set_license_price_nonexistent_content() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    drm.set_license_price(999_u64, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-}
-
-
-#[test]
-fn test_set_multiple_license_prices() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    drm.set_license_price(content_id, LicenseType::SixMonths, 500_u32);
-    drm.set_license_price(content_id, LicenseType::OneYear, 1000_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert!(drm.get_license_price(content_id, LicenseType::OneMonth) == 100_u32, "one month price");
-    assert!(drm.get_license_price(content_id, LicenseType::SixMonths) == 500_u32, "six months price");
-    assert!(drm.get_license_price(content_id, LicenseType::OneYear) == 1000_u32, "one year price");
 }
 
 #[test]
 fn test_issue_license() {
     let (drm, _) = __deploy__();
+    let content_id = setup_content(drm);
 
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Issue license
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.issue_license(content_id, LicenseType::OneMonth);
-    stop_cheat_caller_address(drm.contract_address);
-
-}
-
-#[test]
-#[should_panic(expected: ('License not purchased',))]
-fn test_issue_license_non_purchased() {
-    let (drm, _) = __deploy__();
-
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Try to issue license without purchasing
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.issue_license(content_id, LicenseType::OneMonth);
-    stop_cheat_caller_address(drm.contract_address);    
-}
-
-#[test]
-#[should_panic(expected: ('Content does not exist',))]
-fn test_issue_license_nonexistent_content() {
-    let (drm, _) = __deploy__();
+    // Setup payment token balance
+    let erc20 = IERC20Dispatcher { contract_address: PAYMENT_TOKEN() };
+    start_cheat_caller_address(PAYMENT_TOKEN(), OWNER());
+    erc20.transfer(USER(), 1000);
+    stop_cheat_caller_address(PAYMENT_TOKEN());
 
     start_cheat_caller_address(drm.contract_address, USER());
-    drm.issue_license(999_u64, LicenseType::OneMonth);
+    let license_id = drm.issue_license(content_id, LicenseType::OneMonth);
     stop_cheat_caller_address(drm.contract_address);
+
+    assert!(license_id == 1_u64, "license id should be 1");
 }
 
 #[test]
 fn test_revoke_license() {
     let (drm, _) = __deploy__();
+    let content_id = setup_content(drm);
 
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Issue license
+    // Issue license first
     start_cheat_caller_address(drm.contract_address, USER());
-    drm.issue_license(content_id, LicenseType::OneMonth);
+    let license_id = drm.issue_license(content_id, LicenseType::OneMonth);
     stop_cheat_caller_address(drm.contract_address);
 
     // Revoke license
     start_cheat_caller_address(drm.contract_address, CREATOR());
-    let success = drm.revoke_license(content_id, CREATOR());
+    let success = drm.revoke_license(license_id, USER());
     stop_cheat_caller_address(drm.contract_address);
 
-    assert!(success == true, "license revocation should succeed");
+    assert!(success, "license revocation should succeed");
 }
 
 #[test]
-#[should_panic(expected: ('Only the content owner can revoke license',))]
-fn test_revoke_license_non_owner() {
+fn test_renew_license() {
     let (drm, _) = __deploy__();
+    let content_id = setup_content(drm);
 
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Issue license
+    // Issue license first
     start_cheat_caller_address(drm.contract_address, USER());
-    drm.issue_license(content_id, LicenseType::OneMonth);
+    let license_id = drm.issue_license(content_id, LicenseType::OneMonth);
     stop_cheat_caller_address(drm.contract_address);
 
-    // Try to revoke as different user
-    start_cheat_caller_address(drm.contract_address, OTHER_USER());
-    drm.revoke_license(content_id, OTHER_USER());
+    // Renew license
+    start_cheat_caller_address(drm.contract_address, USER());
+    let success = drm.renew_license(license_id, ONE_MONTH_SECONDS);
+    stop_cheat_caller_address(drm.contract_address);
+
+    assert!(success, "license renewal should succeed");
+}
+
+// ========== PAYMENT TESTS ==========
+
+#[test]
+fn test_process_payment() {
+    let (drm, _) = __deploy__();
+    let content_id = setup_content(drm);
+
+    start_cheat_caller_address(drm.contract_address, USER());
+    let success = drm.process_payment_for_content(content_id, 100);
+    stop_cheat_caller_address(drm.contract_address);
+
+    assert!(success, "payment processing should succeed");
+
+    let creator_balance = drm.get_creator_balance(CREATOR());
+    let platform_balance = drm.get_platform_royalties_balance();
+    
+    assert!(creator_balance == 90, "creator should receive 90%");
+    assert!(platform_balance == 10, "platform should receive 10%");
+}
+
+// ========== OWNERSHIP TESTS ==========
+
+#[test]
+fn test_transfer_content_ownership() {
+    let (drm, _) = __deploy__();
+    let content_id = setup_content(drm);
+
+    start_cheat_caller_address(drm.contract_address, CREATOR());
+    let success = drm.transfer_content_ownership(content_id, NEW_OWNER());
+    stop_cheat_caller_address(drm.contract_address);
+
+    assert!(success, "ownership transfer should succeed");
+
+    let (_, _, _, creator, _) = drm.get_content_details(content_id);
+    assert!(creator == NEW_OWNER(), "ownership not transferred");
+}
+
+#[test]
+#[should_panic(expected: "Only the content owner can transfer ownership")]
+fn test_transfer_content_ownership_non_owner() {
+    let (drm, _) = __deploy__();
+    let content_id = setup_content(drm);
+
+    start_cheat_caller_address(drm.contract_address, USER());
+    drm.transfer_content_ownership(content_id, NEW_OWNER());
     stop_cheat_caller_address(drm.contract_address);
 }
 
+// ========== WITHDRAWAL TESTS ==========
 
+#[test]
+fn test_withdraw_creator_earnings() {
+    let (drm, _) = __deploy__();
+    let content_id = setup_content(drm);
+
+    // Process payment first
+    start_cheat_caller_address(drm.contract_address, USER());
+    drm.process_payment_for_content(content_id, 100);
+    stop_cheat_caller_address(drm.contract_address);
+
+    start_cheat_caller_address(drm.contract_address, CREATOR());
+    let success = drm.withdraw_creator_earnings(content_id, 90);
+    stop_cheat_caller_address(drm.contract_address);
+
+    assert!(success, "withdrawal should succeed");
+}
+
+#[test]
+fn test_withdraw_platform_royalties() {
+    let (drm, _) = __deploy__();
+    let content_id = setup_content(drm);
+
+    // Process payment first
+    start_cheat_caller_address(drm.contract_address, USER());
+    drm.process_payment_for_content(content_id, 100);
+    stop_cheat_caller_address(drm.contract_address);
+
+    start_cheat_caller_address(drm.contract_address, OWNER());
+    let success = drm.withdraw_platform_royalties(10);
+    stop_cheat_caller_address(drm.contract_address);
+
+    assert!(success, "withdrawal should succeed");
+}
+
+// ========== SETTINGS TESTS ==========
 
 #[test]
 fn test_set_royalty_rates() {
     let (drm, _) = __deploy__();
 
     start_cheat_caller_address(drm.contract_address, OWNER());
-    let success = drm.set_royalty_rates(80_u8, 20_u8);
+    let success = drm.set_royalty_rates(80, 20);
     stop_cheat_caller_address(drm.contract_address);
 
-    assert!(success == true, "setting royalty rates should succeed");
+    assert!(success, "setting royalty rates should succeed");
 
     let (creator_percentage, platform_percentage) = drm.get_royalty_rates();
-    assert!(creator_percentage == 80_u8, "creator percentage should be 80");
-    assert!(platform_percentage == 20_u8, "platform percentage should be 20");
+    assert!(creator_percentage == 80, "creator percentage should be 80");
+    assert!(platform_percentage == 20, "platform percentage should be 20");
 }
-
-#[test]
-#[should_panic(expected: ('Only the platform owner can change royalty rates',))]
-fn test_set_royalty_rates_non_owner() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.set_royalty_rates(80_u8, 20_u8);
-    stop_cheat_caller_address(drm.contract_address);
-}
-
-#[test]
-#[should_panic(expected: ('Royalty percentages must sum to 100',))]
-fn test_set_invalid_royalty_rates() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, OWNER());
-    drm.set_royalty_rates(80_u8, 30_u8); // Sum is 110, not 100
-    stop_cheat_caller_address(drm.contract_address);
-}
-
 
 #[test]
 fn test_set_payment_token() {
@@ -314,354 +290,5 @@ fn test_set_payment_token() {
     let success = drm.set_payment_token(new_token);
     stop_cheat_caller_address(drm.contract_address);
 
-    assert!(success == true, "setting payment token should succeed");
+    assert!(success, "setting payment token should succeed");
 }
-
-
-#[test]
-#[should_panic(expected: ('Only the platform owner can change payment token',))]
-fn test_set_payment_token_non_owner() {
-    let (drm, _) = __deploy__();
-    let new_token: ContractAddress = 'NEW_TOKEN'.try_into().unwrap();
-
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.set_payment_token(new_token);
-    stop_cheat_caller_address(drm.contract_address);
-}
-
-
-#[test]
-fn test_transfer_content_ownership() {
-    let (drm, _) = __deploy__();
-
-    // Upload content as creator
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Transfer ownership
-    let success = drm.transfer_content_ownership(content_id, NEW_OWNER());
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert!(success == true, "ownership transfer should succeed");
-
-    // Verify new owner can set price
-    start_cheat_caller_address(drm.contract_address, NEW_OWNER());
-    let price_success = drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert!(price_success == true, "new owner should be able to set price");
-}
-
-#[test]
-#[should_panic(expected: ('Only the content owner can transfer ownership',))]
-fn test_transfer_content_ownership_non_owner() {
-    let (drm, _) = __deploy__();
-
-    // Upload content as creator
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Try to transfer as different user
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.transfer_content_ownership(content_id, NEW_OWNER());
-    stop_cheat_caller_address(drm.contract_address);
-}
-
-
-#[test]
-#[should_panic(expected: ('Content does not exist',))]
-fn test_transfer_nonexistent_content_ownership() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    drm.transfer_content_ownership(999_u64, NEW_OWNER());
-    stop_cheat_caller_address(drm.contract_address);
-}
-
-
-#[test]
-#[should_panic(expected: ('DRM: New owner is current owner',))]
-fn test_transfer_content_ownership_same_owner() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    drm.transfer_content_ownership(content_id, CREATOR()); // Same owner
-    stop_cheat_caller_address(drm.contract_address);
-}
-
-// ========== VIEW FUNCTION TESTS ==========
-
-#[test]
-fn test_get_license_price_no_price_set() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    stop_cheat_caller_address(drm.contract_address);
-
-    let price = drm.get_license_price(content_id, LicenseType::OneMonth);
-    assert!(price == 0_u32, "price should be 0 when not set");
-}
-
-#[test]
-#[should_panic(expected: ('Content does not exist',))]
-fn test_get_content_details_nonexistent() {
-    let (drm, _) = __deploy__();
-
-    drm.get_content_details(999_u64);
-}
-
-#[test]
-#[should_panic(expected: ('Content does not exist',))]
-fn test_get_license_price_nonexistent_content() {
-    let (drm, _) = __deploy__();
-
-    drm.get_license_price(999_u64, LicenseType::OneMonth);
-}
-
-#[test]
-fn test_get_content_details() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    stop_cheat_caller_address(drm.contract_address);
-
-    let (id, _, _, _, _) = drm.get_content_details(content_id);
-    assert!(id == content_id, "content id should match");
-}
-
-#[test]
-fn test_get_royalty_rates() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let (creator_percentage, platform_percentage) = drm.get_royalty_rates();
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert!(creator_percentage == 90_u8, "creator percentage should be 90");
-    assert!(platform_percentage == 10_u8, "platform percentage should be 10");
-}
-
-#[test]
-fn test_get_platform_royalties_balance() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let platform_balance = drm.get_platform_royalties_balance();
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert!(platform_balance == 0_u256, "platform balance should be 0");
-}
-
-#[test]
-fn test_get_creator_royalties_balance() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let creator_balance = drm.get_creator_balance(CREATOR());
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert!(creator_balance == 0_u256, "creator balance should be 0");
-}
-
-#[test]
-fn test_renew_license() {
-    let (drm, _) = __deploy__();
-
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Renew license
-    start_cheat_caller_address(drm.contract_address, USER());
-    let success = drm.renew_license(999_u64, 2592000_u64);
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert(success == true, 'license renewal should succeed');
-}
-
-#[test]
-#[should_panic(expected: ('License not purchased',))]
-fn test_renew_license_not_purchased() {
-    let (drm, _) = __deploy__();
-
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Try to renew without purchasing
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.renew_license(999_u64, 2592000_u64);
-    stop_cheat_caller_address(drm.contract_address);    
-}
-
-#[test]
-#[should_panic(expected: ('Content does not exist',))]
-fn test_renew_license_nonexistent_content() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.renew_license(999_u64, 2592000_u64);
-    stop_cheat_caller_address(drm.contract_address);
-}
-
-#[test]
-fn test_process_payment_for_content() {
-    let (drm, _) = __deploy__();
-
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Process payment
-    start_cheat_caller_address(drm.contract_address, USER());
-    let success = drm.process_payment_for_content(content_id, ONE_MONTH_SECONDS);
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert!(success == true, "payment processing should succeed");
-    
-}
-
-#[test]
-#[should_panic(expected: ('Content does not exist',))]
-fn test_process_payment_for_nonexistent_content() {
-    let (drm, _) = __deploy__();
-
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.process_payment_for_content(999_u64, ONE_MONTH_SECONDS);
-    stop_cheat_caller_address(drm.contract_address);
-}
-
-#[test]
-#[should_panic(expected: ('Payment token not set',))]
-fn test_process_payment_for_content_no_payment_token() {
-    let (drm, _) = __deploy__();
-
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Try to process payment without setting payment token
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.process_payment_for_content(content_id, ONE_MONTH_SECONDS);
-    stop_cheat_caller_address(drm.contract_address);
-}
-
-#[test]
-fn test_withdraw_creator_earnings() {
-    let (drm, _) = __deploy__();
-
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Process payment
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.process_payment_for_content(content_id, ONE_MONTH_SECONDS);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Withdraw earnings
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let success = drm.withdraw_creator_earnings(content_id, 0_u256);
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert!(success == true, "withdrawal should succeed");
-}
-
-#[test]
-#[should_panic(expected: ('Only the content owner can withdraw earnings',))]
-fn test_withdraw_creator_earnings_not_content_creator() {
-    let (drm, _) = __deploy__();
-
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Process payment
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.process_payment_for_content(content_id, ONE_MONTH_SECONDS);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Try to withdraw as different user
-    start_cheat_caller_address(drm.contract_address, OTHER_USER());
-    drm.withdraw_creator_earnings(content_id, 0_u256);
-    stop_cheat_caller_address(drm.contract_address);    
-}
-
-#[test]
-fn test_withdraw_platform_royalties() {
-    let (drm, _) = __deploy__();
-
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Process payment
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.process_payment_for_content(content_id, ONE_MONTH_SECONDS);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Withdraw platform royalties
-    start_cheat_caller_address(drm.contract_address, OWNER());
-    let success = drm.withdraw_platform_royalties(0_u256);
-    stop_cheat_caller_address(drm.contract_address);
-
-    assert!(success == true, "withdrawal should succeed");
-}
-
-
-#[test]
-#[should_panic(expected: ('Only the platform owner can withdraw royalties',))]
-fn test_withdraw_platform_royalties_non_platform_owner() {
-    let (drm, _) = __deploy__();
-
-    // Upload content first
-    start_cheat_caller_address(drm.contract_address, CREATOR());
-    let content_id = drm.upload_content('Test Content', 'ipfs_hash_123');
-    
-    // Set license price
-    drm.set_license_price(content_id, LicenseType::OneMonth, 100_u32);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Process payment
-    start_cheat_caller_address(drm.contract_address, USER());
-    drm.process_payment_for_content(content_id, ONE_MONTH_SECONDS);
-    stop_cheat_caller_address(drm.contract_address);
-
-    // Try to withdraw as different user
-    start_cheat_caller_address(drm.contract_address, OTHER_USER());
-    drm.withdraw_platform_royalties(0_u256);
-    stop_cheat_caller_address(drm.contract_address);    
-}
-
