@@ -180,15 +180,15 @@ export function SidebarContent({ onClose }: { onClose?: () => void }) {
         onClose={onClose}
       />
 
-      <NavItem
+      {/* <NavItem
         href="/analytics"
         icon={<BarChart3 size={18} />}
         label="Analytics"
         active={pathname === "/analytics"}
         onClose={onClose}
-      />
+      /> */}
 
-      <div className="mt-4 border-t border-slate-600 pt-4">
+      {/* <div className="mt-4 border-t border-slate-600 pt-4">
         <NavItem
           href="/settings"
           icon={<Settings size={18} />}
@@ -204,7 +204,7 @@ export function SidebarContent({ onClose }: { onClose?: () => void }) {
           active={pathname === "/help"}
           onClose={onClose}
         />
-      </div>
+      </div> */}
     </nav>
   );
 }

@@ -4,7 +4,6 @@ import {
   alchemyProvider,
   argent,
   braavos,
-  Connector,
   infuraProvider,
   lavaProvider,
   nethermindProvider,
@@ -12,6 +11,7 @@ import {
   StarknetConfig,
   starkscan,
   useInjectedConnectors,
+  jsonRpcProvider
 } from "@starknet-react/core";
 import { ArgentMobileConnector } from "starknetkit/argentMobile";
 import { WebWalletConnector } from "starknetkit/webwallet";
@@ -50,9 +50,13 @@ export function StarknetProvider({ children }: StarknetProviderProps) {
 
   return (
     <StarknetConfig
-      connectors={connectors as Connector[]}
+      connectors={connectors}
       chains={[mainnet, sepolia]}
-      provider={provider}
+      provider={
+        jsonRpcProvider({ rpc: (chain) => ({
+          nodeUrl: process.env.NEXT_PUBLIC_API_KEY
+        })})
+      }
       explorer={starkscan}
       autoConnect
     >

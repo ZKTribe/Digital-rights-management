@@ -24,26 +24,22 @@ export default function NetworkSwitcher() {
   const { chain } = useNetwork();
   const [open, setOpen] = React.useState(false);
   const [selectedNetwork, setSelectedNetwork] = React.useState(
-    NETWORK_MAPPING[chain.network],
+    NETWORK_MAPPING[chain.network]
   );
 
-  const switchNetwork = async (newNetworkId: string, networkLabel: string) => {
-    try {
-      await (window as any)?.starknet?.request({
-        type: "wallet_switchStarknetChain",
-        params: { chainId: newNetworkId },
-      });
+  const switchNetwork = (newNetworkId: string, networkLabel: string) => {
+    // Warn user to switch manually in wallet
+    alert(`Please switch to the ${networkLabel} network from your Braavos wallet manually.`);
 
-      console.log(`Switched to network ${networkLabel}`);
-      setSelectedNetwork(newNetworkId);
-    } catch (error) {
-      console.error("Failed to switch networks:", error);
-    }
+    // Update the selected network in UI (even if not switched yet)
+    setSelectedNetwork(newNetworkId);
   };
 
-  // Update selectedNetwork when chain.network changes
+  // Watch for actual changes in wallet (Braavos)
   React.useEffect(() => {
-    setSelectedNetwork(NETWORK_MAPPING[chain.network]);
+    const mapped = NETWORK_MAPPING[chain.network];
+    setSelectedNetwork(mapped);
+    console.log("Wallet network changed:", chain.network, "→", mapped);
   }, [chain.network]);
 
   return (
@@ -59,8 +55,7 @@ export default function NetworkSwitcher() {
       >
         <span>
           {selectedNetwork
-            ? networks.find((network) => network.value === selectedNetwork)
-                ?.label
+            ? networks.find((network) => network.value === selectedNetwork)?.label
             : "Select Network..."}
         </span>
         <span

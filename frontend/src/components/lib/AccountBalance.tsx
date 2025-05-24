@@ -1,4 +1,4 @@
-import { useCall } from "@starknet-react/core";
+import { useContractRead } from "@starknet-react/core";
 
 import Erc20Abi from "../../../public/abi/token.abi.json";
 import { ETH_SEPOLIA, STRK_SEPOLIA } from "../internal/helpers/constant";
@@ -9,7 +9,7 @@ type Props = {
 };
 
 function AccountBalance({ address, heading = true }: Props) {
-  const { data: eth, isLoading: ethLoading } = useCall({
+  const { data: eth, isLoading: ethLoading } = useContractRead({
     address: ETH_SEPOLIA as `0x${string}`,
     abi: Erc20Abi,
     functionName: "balanceOf",
@@ -17,7 +17,7 @@ function AccountBalance({ address, heading = true }: Props) {
     watch: true,
   });
 
-  const { data: strk, isLoading: strkLoading } = useCall({
+  const { data: strk, isLoading: strkLoading } = useContractRead({
     address: STRK_SEPOLIA as `0x${string}`,
     abi: Erc20Abi,
     functionName: "balanceOf",

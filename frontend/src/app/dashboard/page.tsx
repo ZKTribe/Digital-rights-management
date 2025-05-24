@@ -133,26 +133,6 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Content Performance</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <LineChart />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Revenue by Content Type</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <BarChart />
-          </CardContent>
-        </Card>
-      </div>
-
       {/* Recent Transactions */}
       <Card>
         <CardHeader>
