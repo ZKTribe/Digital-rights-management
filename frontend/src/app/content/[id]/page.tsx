@@ -2,129 +2,38 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowLeft, Download, Edit, Share2, Eye, FileText, ImageIcon, Music, Video } from "lucide-react"
+import { 
+  ArrowLeft, 
+  Download, 
+  Edit, 
+  Share2, 
+  Eye, 
+  FileText, 
+  ImageIcon, 
+  Music, 
+  Video, 
+  Loader2,
+  ExternalLink,
+  AlertTriangle 
+} from "lucide-react"
 
-// Mock content data
-const mockContent = [
-  {
-    id: "content1",
-    title: "Digital Art Collection Vol. 1",
-    description:
-      "A collection of 10 high-resolution digital art pieces perfect for commercial and personal projects. Each piece is carefully crafted with attention to detail and modern design principles.",
-    type: "image",
-    thumbnail: "/placeholder.svg?height=400&width=600",
-    uploadDate: "2023-11-15",
-    views: 1250,
-    downloads: 85,
-    licenses: 12,
-    revenue: "$1,450.00",
-    creator: "Digital Artist Studio",
-    fileSize: "245 MB",
-    resolution: "4K (3840x2160)",
-    format: "PNG, JPG, PSD",
-    tags: ["digital art", "illustration", "design", "modern", "abstract"],
-    protected: true,
-  },
-  {
-    id: "content2",
-    title: "Music Production Course",
-    description:
-      "Comprehensive music production course covering everything from basic theory to advanced mixing and mastering techniques. Includes project files, samples, and step-by-step tutorials.",
-    type: "video",
-    thumbnail: "/placeholder.svg?height=400&width=600",
-    uploadDate: "2023-11-12",
-    views: 3200,
-    downloads: 320,
-    licenses: 45,
-    revenue: "$4,750.00",
-    creator: "Audio Academy",
-    fileSize: "4.2 GB",
-    resolution: "1080p",
-    format: "MP4, PDF, WAV",
-    tags: ["music production", "tutorial", "mixing", "mastering", "audio"],
-    protected: true,
-  },
-  {
-    id: "content3",
-    title: "Stock Photo Bundle",
-    description:
-      "A collection of 50 high-quality stock photos suitable for websites, marketing materials, and social media. All images are professionally shot and edited.",
-    type: "image",
-    thumbnail: "/placeholder.svg?height=400&width=600",
-    uploadDate: "2023-11-10",
-    views: 980,
-    downloads: 210,
-    licenses: 28,
-    revenue: "$2,100.00",
-    creator: "Visual Media Co.",
-    fileSize: "1.8 GB",
-    resolution: "4K (3840x2160)",
-    format: "JPG, PNG",
-    tags: ["stock photos", "photography", "marketing", "business", "website"],
-    protected: true,
-  },
-  {
-    id: "content4",
-    title: "Premium Video Templates",
-    description:
-      "Collection of 20 premium video templates for intros, outros, and transitions. Perfect for YouTubers, content creators, and video editors.",
-    type: "video",
-    thumbnail: "/placeholder.svg?height=400&width=600",
-    uploadDate: "2023-11-08",
-    views: 1800,
-    downloads: 150,
-    licenses: 32,
-    revenue: "$3,200.00",
-    creator: "Motion Graphics Pro",
-    fileSize: "3.5 GB",
-    resolution: "4K (3840x2160)",
-    format: "AEP, MOGRT, MP4",
-    tags: ["video templates", "motion graphics", "intros", "youtube", "editing"],
-    protected: true,
-  },
-  {
-    id: "content5",
-    title: "Ambient Music Pack",
-    description:
-      "Collection of 30 ambient music tracks perfect for videos, games, and multimedia projects. Royalty-free and ready to use in your projects.",
-    type: "audio",
-    thumbnail: "/placeholder.svg?height=400&width=600",
-    uploadDate: "2023-11-05",
-    views: 750,
-    downloads: 120,
-    licenses: 18,
-    revenue: "$1,800.00",
-    creator: "Ambient Sound Studio",
-    fileSize: "1.2 GB",
-    format: "WAV, MP3",
-    tags: ["ambient", "music", "soundtrack", "background", "audio"],
-    protected: true,
-  },
-  {
-    id: "content6",
-    title: "Business Proposal Template",
-    description:
-      "Professional business proposal template with 30 unique pages, custom infographics, and editable elements. Perfect for pitches, reports, and presentations.",
-    type: "document",
-    thumbnail: "/placeholder.svg?height=400&width=600",
-    uploadDate: "2023-11-03",
-    views: 450,
-    downloads: 95,
-    licenses: 8,
-    revenue: "$800.00",
-    creator: "Business Templates Inc.",
-    fileSize: "25 MB",
-    format: "DOCX, PDF, INDD",
-    tags: ["business", "proposal", "template", "professional", "document"],
-    protected: true,
-  },
-]
+// Type definition for content from database
+interface ContentItem {
+  id: string
+  title: string
+  description?: string
+  ipfsHash: string
+  creatorAddress: string
+  contentType: string
+  createdAt: string
+  updatedAt: string
+}
 
 const contentTypeIcons: Record<string, React.ReactNode> = {
   video: <Video className="h-5 w-5" />,
@@ -135,9 +44,167 @@ const contentTypeIcons: Record<string, React.ReactNode> = {
 
 export default function ContentDetailPage({ params }: { params: { id: string } }) {
   const [activeTab, setActiveTab] = useState("overview")
+  const [content, setContent] = useState<ContentItem | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [similarContent, setSimilarContent] = useState<ContentItem[]>([])
+  
+  // Debug states
+  const [debugInfo, setDebugInfo] = useState({
+    contentId: params.id,
+    apiUrl: '',
+    responseStatus: 0,
+    responseText: '',
+    fetchAttempted: false
+  })
 
-  // Find the content based on the ID from the URL params
-  const content = mockContent.find((item) => item.id === params.id) || mockContent[0]
+  // Format date for display
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString()
+  }
+
+  // Generate content URL from IPFS hash
+  const getContentUrl = (ipfsHash: string) => {
+    return `https://ipfs.io/ipfs/${ipfsHash}` // or your preferred IPFS gateway
+  }
+
+  // Fetch specific content by ID
+  // Update the fetchContent function in your useEffect hook
+useEffect(() => {
+  const fetchContent = async () => {
+    setLoading(true);
+    setError(null);
+    
+    const apiUrl = `/api/content/${params.id}`;
+    
+    setDebugInfo(prev => ({
+      ...prev,
+      apiUrl,
+      fetchAttempted: true
+    }));
+    
+    try {
+      console.log('Fetching content with ID:', params.id);
+      console.log('API URL:', apiUrl);
+      
+      const response = await fetch(apiUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store' // Important for dynamic data
+      });
+      
+      setDebugInfo(prev => ({
+        ...prev,
+        responseStatus: response.status
+      }));
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      console.log('Fetched data:', data);
+      
+      // Validate the response structure
+      if (!data.id || !data.title || !data.ipfsHash) {
+        throw new Error('Invalid content data received from server');
+      }
+      
+      setContent(data);
+      
+    } catch (err) {
+      console.error('Fetch error:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (params.id) {
+    fetchContent();
+  } else {
+    setError('No content ID provided');
+    setLoading(false);
+  }
+}, [params.id]);
+
+  // Fetch similar content (same type, different ID)
+  useEffect(() => {
+    const fetchSimilarContent = async () => {
+      if (!content) return
+      
+      try {
+        // You might want to create a separate API endpoint for this
+        // For now, we'll fetch all content from the same creator and filter
+        const response = await fetch(`/api/content?creatorAddress=${encodeURIComponent(content.creatorAddress)}`)
+        
+        if (response.ok) {
+          const allContent = await response.json()
+          const similar = allContent
+            .filter((item: ContentItem) => 
+              item.id !== content.id && 
+              item.contentType === content.contentType
+            )
+            .slice(0, 3)
+          setSimilarContent(similar)
+        }
+      } catch (err) {
+        console.error('Error fetching similar content:', err)
+      }
+    }
+
+    fetchSimilarContent()
+  }, [content])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <span className="ml-2">Loading content...</span>
+      </div>
+    )
+  }
+
+  if (error || !content) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <div className="text-center py-12">
+          <AlertTriangle className="h-12 w-12 mx-auto text-red-400" />
+          <h3 className="mt-4 text-lg font-medium text-red-600">Content not found</h3>
+          <p className="mt-1 text-gray-500">{error || 'The requested content could not be found'}</p>
+          
+          {/* Debug Information */}
+          <div className="mt-8 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg text-left max-w-2xl mx-auto">
+            <h4 className="font-semibold mb-2">Debug Information:</h4>
+            <div className="space-y-2 text-sm font-mono">
+              <div><strong>Content ID:</strong> {debugInfo.contentId}</div>
+              <div><strong>API URL:</strong> {debugInfo.apiUrl}</div>
+              <div><strong>Fetch Attempted:</strong> {debugInfo.fetchAttempted ? 'Yes' : 'No'}</div>
+              <div><strong>Response Status:</strong> {debugInfo.responseStatus || 'No response'}</div>
+              {debugInfo.responseText && (
+                <div>
+                  <strong>Response Text (first 500 chars):</strong>
+                  <pre className="mt-1 p-2 bg-gray-200 dark:bg-gray-700 rounded text-xs overflow-auto">
+                    {debugInfo.responseText}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </div>
+          
+          <Button className="mt-4" asChild variant="outline">
+            <Link href="/content">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Content
+            </Link>
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -154,9 +221,13 @@ export default function ContentDetailPage({ params }: { params: { id: string } }
         <div className="lg:col-span-2 space-y-6">
           <div className="rounded-lg overflow-hidden border">
             <img
-              src={content.thumbnail || "/placeholder.svg"}
+              src={getContentUrl(content.ipfsHash)}
               alt={content.title}
               className="w-full h-auto object-cover"
+              onError={(e) => {
+                // Fallback to placeholder if IPFS image fails to load
+                e.currentTarget.src = "/placeholder.svg"
+              }}
             />
           </div>
 
@@ -170,55 +241,79 @@ export default function ContentDetailPage({ params }: { params: { id: string } }
             <TabsContent value="overview" className="space-y-4 pt-4">
               <div>
                 <h3 className="text-lg font-semibold mb-2">Description</h3>
-                <p className="text-gray-700 dark:text-gray-300">{content.description}</p>
+                <p className="text-gray-700 dark:text-gray-300">
+                  {content.description || "No description available for this content."}
+                </p>
               </div>
 
               <div>
-                <h3 className="text-lg font-semibold mb-2">Specifications</h3>
+                <h3 className="text-lg font-semibold mb-2">Content Details</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <div className="flex justify-between">
                       <span className="text-gray-500">Type</span>
                       <span className="font-medium">
-                        {content.type.charAt(0).toUpperCase() + content.type.slice(1)}
+                        {content.contentType.charAt(0).toUpperCase() + content.contentType.slice(1)}
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-500">Format</span>
-                      <span className="font-medium">{content.format}</span>
+                      <span className="text-gray-500">Upload Date</span>
+                      <span className="font-medium">{formatDate(content.createdAt)}</span>
                     </div>
-                    {content.resolution && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Resolution</span>
-                        <span className="font-medium">{content.resolution}</span>
-                      </div>
-                    )}
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Last Updated</span>
+                      <span className="font-medium">{formatDate(content.updatedAt)}</span>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <div className="flex justify-between">
-                      <span className="text-gray-500">File Size</span>
-                      <span className="font-medium">{content.fileSize}</span>
+                      <span className="text-gray-500">IPFS Hash</span>
+                      <span className="font-medium text-xs bg-gray-100 px-2 py-1 rounded">
+                        {content.ipfsHash.substring(0, 10)}...
+                      </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-500">Upload Date</span>
-                      <span className="font-medium">{content.uploadDate}</span>
+                      <span className="text-gray-500">Creator</span>
+                      <span className="font-medium text-xs bg-gray-100 px-2 py-1 rounded">
+                        {content.creatorAddress.substring(0, 6)}...{content.creatorAddress.substring(content.creatorAddress.length - 4)}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Blockchain Protected</span>
-                      <span className="font-medium">{content.protected ? "Yes" : "No"}</span>
+                      <span className="font-medium">Yes</span>
                     </div>
                   </div>
                 </div>
               </div>
 
               <div>
-                <h3 className="text-lg font-semibold mb-2">Tags</h3>
-                <div className="flex flex-wrap gap-2">
-                  {content.tags.map((tag, index) => (
-                    <Badge key={index} variant="secondary">
-                      {tag}
-                    </Badge>
-                  ))}
+                <h3 className="text-lg font-semibold mb-2">IPFS Information</h3>
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">Content Hash</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 font-mono">
+                        {content.ipfsHash}
+                      </p>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => navigator.clipboard.writeText(content.ipfsHash)}
+                    >
+                      Copy Hash
+                    </Button>
+                  </div>
+                  <div className="mt-3">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => window.open(getContentUrl(content.ipfsHash), '_blank')}
+                    >
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      View on IPFS
+                    </Button>
+                  </div>
                 </div>
               </div>
             </TabsContent>
@@ -226,67 +321,20 @@ export default function ContentDetailPage({ params }: { params: { id: string } }
             <TabsContent value="licenses" className="pt-4">
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-semibold">Active Licenses</h3>
+                  <h3 className="text-lg font-semibold">Manage Licenses</h3>
                   <Button asChild>
                     <Link href={`/licenses/create?contentId=${content.id}`}>Create New License</Link>
                   </Button>
                 </div>
 
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="font-medium">Personal License</h4>
-                          <p className="text-sm text-gray-500">Issued to: John Smith</p>
-                        </div>
-                        <Badge>Active</Badge>
-                      </div>
-                      <div className="grid grid-cols-3 gap-4 text-sm">
-                        <div>
-                          <p className="text-gray-500">Issue Date</p>
-                          <p className="font-medium">2023-10-15</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Expiry Date</p>
-                          <p className="font-medium">2024-10-15</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Price</p>
-                          <p className="font-medium">$49.99</p>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="font-medium">Commercial License</h4>
-                          <p className="text-sm text-gray-500">Issued to: Acme Corporation</p>
-                        </div>
-                        <Badge>Active</Badge>
-                      </div>
-                      <div className="grid grid-cols-3 gap-4 text-sm">
-                        <div>
-                          <p className="text-gray-500">Issue Date</p>
-                          <p className="font-medium">2023-09-22</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Expiry Date</p>
-                          <p className="font-medium">2025-09-22</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Price</p>
-                          <p className="font-medium">$199.99</p>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <div className="text-center py-8">
+                  <FileText className="h-12 w-12 mx-auto text-gray-400" />
+                  <h3 className="mt-4 text-lg font-medium">No licenses yet</h3>
+                  <p className="mt-1 text-gray-500">Create your first license to start monetizing this content</p>
+                  <Button className="mt-4" asChild>
+                    <Link href={`/licenses/create?contentId=${content.id}`}>Create License</Link>
+                  </Button>
+                </div>
               </div>
             </TabsContent>
 
@@ -297,7 +345,7 @@ export default function ContentDetailPage({ params }: { params: { id: string } }
                     <CardContent className="pt-6">
                       <div className="text-center">
                         <p className="text-gray-500 text-sm">Total Views</p>
-                        <p className="text-3xl font-bold">{content.views.toLocaleString()}</p>
+                        <p className="text-3xl font-bold">0</p>
                       </div>
                     </CardContent>
                   </Card>
@@ -305,7 +353,7 @@ export default function ContentDetailPage({ params }: { params: { id: string } }
                     <CardContent className="pt-6">
                       <div className="text-center">
                         <p className="text-gray-500 text-sm">Total Downloads</p>
-                        <p className="text-3xl font-bold">{content.downloads.toLocaleString()}</p>
+                        <p className="text-3xl font-bold">0</p>
                       </div>
                     </CardContent>
                   </Card>
@@ -313,7 +361,7 @@ export default function ContentDetailPage({ params }: { params: { id: string } }
                     <CardContent className="pt-6">
                       <div className="text-center">
                         <p className="text-gray-500 text-sm">Total Revenue</p>
-                        <p className="text-3xl font-bold text-green-600 dark:text-green-400">{content.revenue}</p>
+                        <p className="text-3xl font-bold text-green-600 dark:text-green-400">$0.00</p>
                       </div>
                     </CardContent>
                   </Card>
@@ -322,14 +370,7 @@ export default function ContentDetailPage({ params }: { params: { id: string } }
                 <div>
                   <h3 className="text-lg font-semibold mb-4">Usage Over Time</h3>
                   <div className="h-64 bg-gray-100 dark:bg-gray-800 rounded-lg flex items-center justify-center">
-                    <p className="text-gray-500">Analytics chart will be displayed here</p>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-lg font-semibold mb-4">Geographic Distribution</h3>
-                  <div className="h-64 bg-gray-100 dark:bg-gray-800 rounded-lg flex items-center justify-center">
-                    <p className="text-gray-500">Geographic map will be displayed here</p>
+                    <p className="text-gray-500">Analytics will be available once you start receiving views</p>
                   </div>
                 </div>
               </div>
@@ -341,36 +382,39 @@ export default function ContentDetailPage({ params }: { params: { id: string } }
           <Card>
             <CardContent className="pt-6 space-y-4">
               <div className="flex justify-between items-center">
-                <div className="text-2xl font-bold">{content.revenue}</div>
+                <div className="text-2xl font-bold">$0.00</div>
                 <Badge className="flex items-center gap-1" variant="secondary">
-                  {contentTypeIcons[content.type]}
-                  {content.type.charAt(0).toUpperCase() + content.type.slice(1)}
+                  {contentTypeIcons[content.contentType] || <FileText className="h-5 w-5" />}
+                  {content.contentType.charAt(0).toUpperCase() + content.contentType.slice(1)}
                 </Badge>
               </div>
 
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-gray-500">Total Licenses</p>
-                  <p className="font-medium">{content.licenses}</p>
+                  <p className="font-medium">0</p>
                 </div>
                 <div>
                   <p className="text-gray-500">Downloads</p>
-                  <p className="font-medium">{content.downloads}</p>
+                  <p className="font-medium">0</p>
                 </div>
                 <div>
                   <p className="text-gray-500">Views</p>
-                  <p className="font-medium">{content.views}</p>
+                  <p className="font-medium">0</p>
                 </div>
                 <div>
                   <p className="text-gray-500">Upload Date</p>
-                  <p className="font-medium">{content.uploadDate}</p>
+                  <p className="font-medium">{formatDate(content.createdAt)}</p>
                 </div>
               </div>
 
               <div className="flex gap-2">
-                <Button className="flex-1">
+                <Button 
+                  className="flex-1"
+                  onClick={() => window.open(getContentUrl(content.ipfsHash), '_blank')}
+                >
                   <Download className="mr-2 h-4 w-4" />
-                  Download
+                  View Content
                 </Button>
                 <Button variant="outline" className="flex-1" asChild>
                   <Link href={`/content/${content.id}/edit`}>
@@ -384,7 +428,15 @@ export default function ContentDetailPage({ params }: { params: { id: string } }
                 <Button variant="outline" className="flex-1" asChild>
                   <Link href={`/licenses/create?contentId=${content.id}`}>Create License</Link>
                 </Button>
-                <Button variant="outline" className="flex-1">
+                <Button 
+                  variant="outline" 
+                  className="flex-1"
+                  onClick={() => {
+                    const url = `${window.location.origin}/content/${content.id}`
+                    navigator.clipboard.writeText(url)
+                    // You might want to show a toast notification here
+                  }}
+                >
                   <Share2 className="mr-2 h-4 w-4" />
                   Share
                 </Button>
@@ -413,40 +465,41 @@ export default function ContentDetailPage({ params }: { params: { id: string } }
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="pt-6">
-              <h3 className="font-semibold mb-2">Similar Content</h3>
-              <div className="space-y-3">
-                {mockContent
-                  .filter((item) => item.id !== content.id && item.type === content.type)
-                  .slice(0, 3)
-                  .map((similarContent) => (
+          {similarContent.length > 0 && (
+            <Card>
+              <CardContent className="pt-6">
+                <h3 className="font-semibold mb-2">Your Similar Content</h3>
+                <div className="space-y-3">
+                  {similarContent.map((similarItem) => (
                     <Link
-                      key={similarContent.id}
-                      href={`/content/${similarContent.id}`}
+                      key={similarItem.id}
+                      href={`/content/${similarItem.id}`}
                       className="flex gap-3 hover:bg-gray-50 dark:hover:bg-gray-800 p-2 rounded-lg transition-colors"
                     >
                       <div className="w-16 h-16 bg-gray-100 rounded overflow-hidden flex-shrink-0">
                         <img
-                          src={similarContent.thumbnail || "/placeholder.svg"}
-                          alt={similarContent.title}
+                          src={getContentUrl(similarItem.ipfsHash)}
+                          alt={similarItem.title}
                           className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.src = "/placeholder.svg"
+                          }}
                         />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-medium truncate">{similarContent.title}</h4>
-                        <div className="flex items-center text-sm">
-                          <Eye className="h-3 w-3 mr-1" />
-                          <span>{similarContent.views}</span>
+                        <h4 className="font-medium truncate">{similarItem.title}</h4>
+                        <div className="flex items-center text-sm text-gray-500">
+                          <span>{formatDate(similarItem.createdAt)}</span>
                           <span className="mx-1">•</span>
-                          <span>{similarContent.revenue}</span>
+                          <span className="capitalize">{similarItem.contentType}</span>
                         </div>
                       </div>
                     </Link>
                   ))}
-              </div>
-            </CardContent>
-          </Card>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </div>

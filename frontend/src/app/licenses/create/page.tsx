@@ -1,8 +1,6 @@
 "use client"
 
-import type React from "react"
-
-import { useState } from "react"
+import React, { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -11,48 +9,21 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Label } from "@/components/ui/label"
 import { ArrowLeft, FileText, ImageIcon, Music, Video } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { useAccount, useContractWrite, useWaitForTransaction } from "@starknet-react/core"
 
-// Mock content data
-const mockContent = [
-  {
-    id: "content1",
-    title: "Digital Art Collection Vol. 1",
-    type: "image",
-    thumbnail: "/placeholder.svg?height=100&width=100",
-  },
-  {
-    id: "content2",
-    title: "Music Production Course",
-    type: "video",
-    thumbnail: "/placeholder.svg?height=100&width=100",
-  },
-  {
-    id: "content3",
-    title: "Stock Photo Bundle",
-    type: "image",
-    thumbnail: "/placeholder.svg?height=100&width=100",
-  },
-  {
-    id: "content4",
-    title: "Premium Video Templates",
-    type: "video",
-    thumbnail: "/placeholder.svg?height=100&width=100",
-  },
-  {
-    id: "content5",
-    title: "Ambient Music Pack",
-    type: "audio",
-    thumbnail: "/placeholder.svg?height=100&width=100",
-  },
-  {
-    id: "content6",
-    title: "Business Proposal Template",
-    type: "document",
-    thumbnail: "/placeholder.svg?height=100&width=100",
-  },
-]
+// Starknet contract address
+const DRM_CONTRACT_ADDRESS = "0x04433755015768a1cca267bc3f4b6721772e42cefc9dbffff31ee758fb12022f"
+
+interface ContentItem {
+  id: string
+  title: string
+  description?: string
+  ipfsHash: string
+  creatorAddress: string
+  contentType: string
+  createdAt: string
+  updatedAt: string
+}
 
 const contentTypeIcons: Record<string, React.ReactNode> = {
   video: <Video className="h-5 w-5" />,
@@ -61,85 +32,185 @@ const contentTypeIcons: Record<string, React.ReactNode> = {
   document: <FileText className="h-5 w-5" />,
 }
 
-const licenseTypes = [
+// License types matching contract enum
+const LICENSE_TYPES = [
   {
-    id: "personal",
-    name: "Personal License",
-    description: "For individual, non-commercial use only",
-    price: "$49.99",
-    duration: "1 year",
-    rights: ["Personal projects", "Non-commercial use", "Single user"],
+    id: "0", // OneMonth
+    name: "1-Month License",
+    defaultPrice: "0.01" // ETH
   },
   {
-    id: "commercial",
-    name: "Commercial License",
-    description: "For business and commercial applications",
-    price: "$199.99",
-    duration: "2 years",
-    rights: ["Commercial projects", "Multiple projects", "Single business"],
+    id: "1", // SixMonths
+    name: "6-Month License", 
+    defaultPrice: "0.05" // ETH
   },
   {
-    id: "extended",
-    name: "Extended License",
-    description: "Full rights with ability to sublicense",
-    price: "$299.99",
-    duration: "5 years",
-    rights: ["Unlimited commercial use", "Resale in products", "Multiple businesses"],
-  },
+    id: "2", // OneYear
+    name: "1-Year License",
+    defaultPrice: "0.1" // ETH
+  }
 ]
 
-export default function CreateLicensePage() {
+export default function SetLicensePricesPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const contentIdParam = searchParams.get("contentId")
-
-  const [selectedContent, setSelectedContent] = useState<string>(contentIdParam || "")
-  const [licenseType, setLicenseType] = useState<string>("personal")
-  const [recipientWallet, setRecipientWallet] = useState<string>("")
-  const [recipientName, setRecipientName] = useState<string>("")
-  const [customPrice, setCustomPrice] = useState<string>("")
-  const [customDuration, setCustomDuration] = useState<string>("1")
-  const [isCreating, setIsCreating] = useState(false)
-
+  const { address } = useAccount()
   const { toast } = useToast()
 
-  const selectedLicenseType = licenseTypes.find((type) => type.id === licenseType)
-  const selectedContentItem = mockContent.find((content) => content.id === selectedContent)
+  const [selectedContent, setSelectedContent] = useState<string>(contentIdParam || "")
+  const [prices, setPrices] = useState<Record<string, string>>({})
+  const [isSettingPrices, setIsSettingPrices] = useState(false)
+  const [content, setContent] = useState<ContentItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [txHash, setTxHash] = useState<string | null>(null)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Initialize prices with defaults
+  useEffect(() => {
+    const defaultPrices = LICENSE_TYPES.reduce((acc, type) => {
+      acc[type.id] = type.defaultPrice
+      return acc
+    }, {} as Record<string, string>)
+    setPrices(defaultPrices)
+  }, [])
+
+  // Fetch content owned by the connected wallet
+  useEffect(() => {
+    const fetchContent = async () => {
+      if (!address) return
+      
+      setLoading(true)
+      try {
+        const response = await fetch(`/api/content?creatorAddress=${encodeURIComponent(address)}`)
+        if (!response.ok) throw new Error('Failed to fetch content')
+        setContent(await response.json())
+      } catch (err) {
+        toast({
+          title: "Error",
+          description: err instanceof Error ? err.message : "Failed to load content",
+          variant: "destructive"
+        })
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchContent()
+  }, [address, toast])
+
+  // Prepare contract calls
+  const { writeAsync } = useContractWrite({
+    calls: LICENSE_TYPES.map(type => ({
+      contractAddress: DRM_CONTRACT_ADDRESS,
+      entrypoint: 'set_license_price',
+      calldata: [
+        selectedContent, // content_id: u64
+        type.id, // license_type: enum index
+        Math.round(parseFloat(prices[type.id] || "0") * 100) // price: u32 (cents)
+      ]
+    }))
+  })
+
+  // Track transaction status
+  const { data: txData } = useWaitForTransaction({ 
+    hash: txHash as `0x${string}`,
+    watch: true
+  })
+
+ useEffect(() => {
+  if (txHash && txData) {
+    if (
+      'finality_status' in txData && 
+      txData.finality_status === "ACCEPTED_ON_L2" &&
+      'execution_status' in txData &&
+      txData.execution_status === "SUCCEEDED"
+    ) {
+      toast({
+        title: "Prices set successfully!",
+        description: "License prices updated on-chain"
+      });
+      setTxHash(null);
+      router.refresh(); // Optional: Refresh page data if needed
+    }
+    else if (
+      'execution_status' in txData &&
+      txData.execution_status === "REVERTED"
+    ) {
+      toast({
+        title: "Transaction reverted",
+        description: txData.revert_reason || "Failed to set license prices",
+        variant: "destructive"
+      });
+      setTxHash(null);
+    }
+  }
+}, [txData, txHash, toast, router]);
+
+  const handleSetPrices = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (!selectedContent) {
       toast({
         title: "Content required",
-        description: "Please select content to license",
-        variant: "destructive",
+        description: "Please select content",
+        variant: "destructive"
       })
       return
     }
 
-    if (!recipientWallet) {
-      toast({
-        title: "Recipient required",
-        description: "Please enter recipient wallet address",
-        variant: "destructive",
-      })
-      return
+    // Validate prices
+    for (const type of LICENSE_TYPES) {
+      const price = parseFloat(prices[type.id] || "0")
+      if (isNaN(price)) {
+        toast({
+          title: "Invalid price",
+          description: `Please enter a valid number for ${type.name}`,
+          variant: "destructive"
+        })
+        return
+      }
+      if (price < 0) {
+        toast({
+          title: "Invalid price",
+          description: `Price cannot be negative for ${type.name}`,
+          variant: "destructive"
+        })
+        return
+      }
     }
 
-    setIsCreating(true)
+    setIsSettingPrices(true)
 
-    // Simulate API call
-    setTimeout(() => {
-      setIsCreating(false)
-
+    try {
+      const tx = await writeAsync()
+      setTxHash(tx.transaction_hash)
+      
       toast({
-        title: "License created",
-        description: "The license has been created successfully",
+        title: "Transaction sent",
+        description: "Setting license prices..."
       })
 
-      router.push("/licenses")
-    }, 2000)
+    } catch (error) {
+      console.error("Failed to set prices:", error)
+      toast({
+        title: "Error setting prices",
+        description: error instanceof Error ? error.message : "Transaction failed",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSettingPrices(false)
+    }
+  }
+
+  if (!address) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="text-center">
+          <h3 className="text-lg font-medium">Wallet not connected</h3>
+          <p className="text-gray-500">Please connect your wallet</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -150,160 +221,92 @@ export default function CreateLicensePage() {
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
-        <h1 className="text-3xl font-bold">Create New License</h1>
+        <h1 className="text-3xl font-bold">Set License Prices</h1>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSetPrices} className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>Select Content</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {mockContent.map((content) => (
-                <div
-                  key={content.id}
-                  className={`border rounded-lg p-3 cursor-pointer transition-colors ${
-                    selectedContent === content.id
-                      ? "border-primary bg-primary/5"
-                      : "hover:bg-gray-50 dark:hover:bg-gray-800"
-                  }`}
-                  onClick={() => setSelectedContent(content.id)}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 bg-gray-100 rounded overflow-hidden">
-                      <img
-                        src={content.thumbnail || "/placeholder.svg"}
-                        alt={content.title}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{content.title}</div>
-                      <div className="flex items-center text-xs text-gray-500 mt-1">
-                        {contentTypeIcons[content.type]}
-                        <span className="ml-1">{content.type}</span>
+            {loading ? (
+              <div className="flex justify-center py-8">
+                <p>Loading content...</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {content.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`border rounded-lg p-3 cursor-pointer transition-colors ${
+                      selectedContent === item.id
+                        ? "border-primary bg-primary/5"
+                        : "hover:bg-gray-50 dark:hover:bg-gray-800"
+                    }`}
+                    onClick={() => setSelectedContent(item.id)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 bg-gray-100 rounded overflow-hidden">
+                        <img
+                          src={`https://ipfs.io/ipfs/${item.ipfsHash}`}
+                          alt={item.title}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">{item.title}</div>
+                        <div className="flex items-center text-xs text-gray-500 mt-1">
+                          {contentTypeIcons[item.contentType]}
+                          <span className="ml-1">{item.contentType}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>License Type</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <RadioGroup value={licenseType} onValueChange={setLicenseType} className="space-y-4">
-              {licenseTypes.map((type) => (
-                <div
-                  key={type.id}
-                  className={`border rounded-lg p-4 transition-colors ${
-                    licenseType === type.id ? "border-primary bg-primary/5" : "hover:bg-gray-50 dark:hover:bg-gray-800"
-                  }`}
-                >
-                  <div className="flex items-start">
-                    <RadioGroupItem value={type.id} id={type.id} className="mt-1" />
-                    <div className="ml-3 flex-1">
-                      <Label htmlFor={type.id} className="text-base font-medium cursor-pointer">
-                        {type.name} - {type.price}
-                      </Label>
-                      <p className="text-sm text-gray-500 mt-1">{type.description}</p>
-                      <div className="mt-2">
-                        <p className="text-sm font-medium">Includes:</p>
-                        <ul className="mt-1 space-y-1">
-                          {type.rights.map((right, index) => (
-                            <li key={index} className="text-sm flex items-center">
-                              <svg
-                                className="h-4 w-4 text-green-500 mr-2"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                              >
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                              {right}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-bold">{type.price}</div>
-                      <div className="text-sm text-gray-500">{type.duration}</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </RadioGroup>
-
-            <div className="mt-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="customPrice">Custom Price (optional)</Label>
-                <Input
-                  id="customPrice"
-                  type="text"
-                  placeholder={selectedLicenseType?.price || ""}
-                  value={customPrice}
-                  onChange={(e) => setCustomPrice(e.target.value)}
-                  className="w-32 text-right"
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <Label htmlFor="customDuration">License Duration (years)</Label>
-                <Select value={customDuration} onValueChange={setCustomDuration}>
-                  <SelectTrigger className="w-32">
-                    <SelectValue placeholder="Duration" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1 year</SelectItem>
-                    <SelectItem value="2">2 years</SelectItem>
-                    <SelectItem value="5">5 years</SelectItem>
-                    <SelectItem value="10">10 years</SelectItem>
-                    <SelectItem value="perpetual">Perpetual</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Recipient Information</CardTitle>
+            <CardTitle>Set Prices for License Types</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="recipientWallet">Recipient Wallet Address</Label>
-              <Input
-                id="recipientWallet"
-                placeholder="0x..."
-                value={recipientWallet}
-                onChange={(e) => setRecipientWallet(e.target.value)}
-                required
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="recipientName">Recipient Name (optional)</Label>
-              <Input
-                id="recipientName"
-                placeholder="Individual or organization name"
-                value={recipientName}
-                onChange={(e) => setRecipientName(e.target.value)}
-              />
-            </div>
+            {LICENSE_TYPES.map((type) => (
+              <div key={type.id} className="space-y-2">
+                <Label>{type.name}</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    value={prices[type.id] || ""}
+                    onChange={(e) => 
+                      setPrices(prev => ({
+                        ...prev,
+                        [type.id]: e.target.value
+                      }))
+                    }
+                    min="0"
+                    step="0.001"
+                    placeholder={type.defaultPrice}
+                  />
+                  <span className="whitespace-nowrap">ETH</span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Will be stored as {Math.round(parseFloat(prices[type.id] || "0") * 100)} cents (u32)
+                </p>
+              </div>
+            ))}
           </CardContent>
-          <CardFooter className="flex justify-between">
-            <Button variant="outline" asChild>
-              <Link href="/licenses">Cancel</Link>
-            </Button>
-            <Button type="submit" disabled={isCreating}>
-              {isCreating ? "Creating License..." : "Create License"}
+          <CardFooter className="flex justify-end">
+            <Button 
+              type="submit" 
+              disabled={isSettingPrices || !selectedContent || txHash !== null}
+            >
+              {txHash ? "Processing..." : 
+               isSettingPrices ? "Preparing transaction..." : 
+               "Set All Prices"}
             </Button>
           </CardFooter>
         </Card>

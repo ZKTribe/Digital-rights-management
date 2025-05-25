@@ -22,25 +22,11 @@ export default function Dashboard() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="bg-green-100 dark:bg-green-900/20">
+        <Card className="bg-green-100 dark:bg-green-900/20 h-[150px]">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Recent Uploads</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2 mb-4">
-              <div className="flex justify-between">
-                <span>Video Course 1</span>
-                <span>3 days ago</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Podcast Episode</span>
-                <span>1 week ago</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Ebook</span>
-                <span>2 weeks ago</span>
-              </div>
-            </div>
             <div className="flex justify-between items-center">
               <span className="text-2xl font-bold">12</span>
               <span className="text-sm text-muted-foreground">Total Uploads</span>
@@ -48,25 +34,11 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="bg-yellow-100 dark:bg-yellow-900/20">
+        <Card className="bg-yellow-100 dark:bg-yellow-900/20 h-[150px]">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Licenses</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2 mb-4">
-              <div className="flex justify-between">
-                <span>Active Licenses</span>
-                <span>24</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Pending Approval</span>
-                <span>5</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Expired Licenses</span>
-                <span>3</span>
-              </div>
-            </div>
             <div className="flex justify-between items-center">
               <span className="text-2xl font-bold">32</span>
               <span className="text-sm text-muted-foreground">Total Licenses</span>
@@ -74,25 +46,11 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="bg-blue-100 dark:bg-blue-900/20">
+        <Card className="bg-blue-100 dark:bg-blue-900/20 h-[150px]">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Earnings</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2 mb-4">
-              <div className="flex justify-between">
-                <span>This Month</span>
-                <span>$4,750</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Last Month</span>
-                <span>$3,920</span>
-              </div>
-              <div className="flex justify-between">
-                <span>This Year</span>
-                <span>$42,350</span>
-              </div>
-            </div>
             <div className="flex justify-between items-center">
               <span className="text-2xl font-bold text-green-600 dark:text-green-400">$50,420</span>
               <span className="text-sm text-muted-foreground">Total Earnings</span>

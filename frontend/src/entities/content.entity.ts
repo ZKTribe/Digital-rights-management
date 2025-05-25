@@ -1,5 +1,5 @@
 // src/entities/content.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index, OneToMany } from 'typeorm';
 
 @Entity()
 export class Content {
@@ -13,7 +13,7 @@ export class Content {
   title!: string;
 
   @Column({ type: 'text', nullable: true })
-  description!: string;
+  description?: string;
 
   @Column()
   ipfsHash!: string;
@@ -27,6 +27,9 @@ export class Content {
 
   @CreateDateColumn()
   createdAt!: Date;
+
+    @OneToMany('License', (license: any) => license.content)
+  licenses!: any[];
 
   @Column({ default: false })
   isActive!: boolean;

@@ -6,45 +6,18 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 
+// Transaction type definition
+interface Transaction {
+  id: string;
+  walletAddress: string;
+  contentTitle: string;
+  amount: number | string;
+  date: string;
+  status: string;
+}
+
 // Mock transaction data
-const transactions = [
-  {
-    id: "tx1",
-    walletAddress: "0x3F5CE5FBFe3ddAB1Fa1f5Ef961a287d8Fb9f3c6",
-    amount: "$450.25",
-    date: "2023-11-15",
-    status: "completed",
-    type: "license_purchase",
-    contentTitle: "Digital Art Collection Vol. 1",
-  },
-  {
-    id: "tx2",
-    walletAddress: "0x7A1BaDxF62aCe6A1Ca9f987D9c93d9dB3A2Bab2",
-    amount: "$750.50",
-    date: "2023-11-12",
-    status: "completed",
-    type: "license_purchase",
-    contentTitle: "Music Production Course",
-  },
-  {
-    id: "tx3",
-    walletAddress: "0xfDx2Ebx2Ad4B2Db7Ef32Faf16a3B7A6Ea5b2Daa",
-    amount: "$225.75",
-    date: "2023-11-10",
-    status: "completed",
-    type: "license_purchase",
-    contentTitle: "Stock Photo Bundle",
-  },
-  {
-    id: "tx4",
-    walletAddress: "0xC4aF6Fc4Ccc0E4Cc2F20Ccb9b2Bd18C1Db9Dd4",
-    amount: "$1,200.00",
-    date: "2023-11-08",
-    status: "completed",
-    type: "license_purchase",
-    contentTitle: "Premium Video Templates",
-  },
-]
+const transactions: Transaction[] = [];
 
 export default function RecentTransactions() {
   const [page, setPage] = useState(1)

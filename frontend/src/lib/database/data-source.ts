@@ -1,14 +1,16 @@
 import { DataSource, DataSourceOptions } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { config } from 'dotenv';
-import { Content } from '@/entities/content.entity';
 import path from 'path';
+import { Content } from '@/entities/content.entity';
+import { License } from '@/entities/license.entity';
+
 
 config();
 
 const configService = new ConfigService();
 
-const entityClasses = [Content];
+const entityClasses = [Content, License];
 
 const dataSourceOptions: DataSourceOptions = {
   type: 'mysql',
